@@ -1,7 +1,7 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
@@ -13,7 +13,7 @@ android {
         minSdk = 21
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.1"
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -39,34 +39,33 @@ android {
     }
 }
 
-// build.gradle.kts
-
-// En app/build.gradle.kts
-
 dependencies {
-    // --- DEPENDENCIAS PRINCIPALES Y DE CICLO DE VIDA ---
+    // Core + ciclo de vida
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation("androidx.activity:activity-compose:1.8.0")
 
-    // --- INTERFAZ DE USUARIO (COMPOSE) ---
+    // Activity Compose (incluye rememberLauncherForActivityResult)
+    implementation(libs.androidx.activity.compose)
+
+    // Compose con BOM del catálogo (mantiene versiones alineadas)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
-    implementation("androidx.compose.foundation:foundation")
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.androidx.compose.material3)
 
-    // --- LIBRERÍAS DE TERCEROS ---
-    implementation(libs.kotlinx.coroutines.android)
-
-    // --- DEPENDENCIAS DE TEST ---
+    // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+
+    // Debug tools
+    debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // Coroutines (necesarias por Dispatchers/withContext/rememberCoroutineScope)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
