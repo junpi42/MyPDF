@@ -32,6 +32,9 @@ import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
 import java.util.Date
+import android.graphics.Bitmap
+import coil.compose.rememberAsyncImagePainter
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,21 +106,37 @@ fun LibraryScreen() {
                     .padding(padding)
             ) {
                 items(pdfs) { file ->
+                    // Genera thumbnail en background
+                    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = file) {
+                        value = generatePdfThumbnail(file)
+                    }
+
                     ListItem(
                         headlineContent = { Text(file.name) },
                         supportingContent = {
                             Text("${file.length() / 1024} KB • ${Date(file.lastModified())}")
                         },
+                        leadingContent = {
+                            if (thumbnail != null) {
+                                androidx.compose.foundation.Image(
+                                    painter = rememberAsyncImagePainter(thumbnail),
+                                    contentDescription = "Preview PDF",
+                                    modifier = Modifier.size(60.dp)
+                                )
+                            } else {
+                                Text("Sin preview")
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                // Aquí abrirás el PDF más adelante
                                 message = "Abrirías: ${file.name}"
                             }
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                     HorizontalDivider()
                 }
+
             }
         }
     }

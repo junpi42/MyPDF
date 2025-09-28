@@ -5,6 +5,28 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
 
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+
+fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitmap? {
+    return try {
+        val fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        val renderer = PdfRenderer(fileDescriptor)
+        val page = renderer.openPage(0) // primera página
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        page.close()
+        renderer.close()
+        fileDescriptor.close()
+        bitmap
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
 // Carpeta propia de la app para guardar los PDFs clonados
 fun appPdfDir(context: Context): File {
     val dir = File(context.filesDir, "pdf_library")
