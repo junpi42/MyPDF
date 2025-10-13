@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.Image
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -68,9 +69,26 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Cargar la lista al entrar
+    // Estado para controlar si las miniaturas están cargando
+    var thumbnailsLoading by remember { mutableStateOf(true) }
+    val thumbnailsMap = remember { mutableStateMapOf<File, Bitmap?>() }
+
+    // Cargar la lista al entrar y generar miniaturas
     LaunchedEffect(Unit) {
-        pdfs = listAppPdfs(context)
+        thumbnailsLoading = true
+        val files = withContext(Dispatchers.IO) {
+            listAppPdfs(context)
+        }
+        pdfs = files
+
+        // Generar todas las miniaturas en background
+        withContext(Dispatchers.IO) {
+            files.forEach { file ->
+                val thumbnail = generatePdfThumbnail(file)
+                thumbnailsMap[file] = thumbnail
+            }
+        }
+        thumbnailsLoading = false
     }
 
     // Selector del sistema para importar PDFs y clonarlos
@@ -85,10 +103,23 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                 )
                 // Clonar en background y refrescar lista
                 scope.launch {
-                    withContext(Dispatchers.IO) {
+                    thumbnailsLoading = true
+                    val newFile = withContext(Dispatchers.IO) {
                         clonePdfIntoApp(context, pickedUri)
                     }
-                    pdfs = listAppPdfs(context)
+                    val files = withContext(Dispatchers.IO) {
+                        listAppPdfs(context)
+                    }
+                    pdfs = files
+
+                    // Generar miniatura del nuevo archivo
+                    if (newFile != null) {
+                        val thumbnail = withContext(Dispatchers.IO) {
+                            generatePdfThumbnail(newFile)
+                        }
+                        thumbnailsMap[newFile] = thumbnail
+                    }
+                    thumbnailsLoading = false
                     message = "PDF importado ✓"
                 }
             }
@@ -103,7 +134,21 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
             }
         }
     ) { padding ->
-        if (pdfs.isEmpty()) {
+        // Mostrar pantalla de carga mientras se generan las miniaturas
+        if (thumbnailsLoading && pdfs.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Cargando miniaturas...")
+                }
+            }
+        } else if (pdfs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -117,10 +162,7 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                     .padding(padding)
             ) {
                 items(pdfs) { file ->
-                    // Genera thumbnail en background
-                    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = file) {
-                        value = withContext(Dispatchers.IO) { generatePdfThumbnail(file) }
-                    }
+                    val thumbnail = thumbnailsMap[file]
 
                     ListItem(
                         headlineContent = { Text(file.name) },
@@ -130,12 +172,17 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                         leadingContent = {
                             if (thumbnail != null) {
                                 Image(
-                                    bitmap = thumbnail!!.asImageBitmap(),
+                                    bitmap = thumbnail.asImageBitmap(),
                                     contentDescription = "Preview PDF",
                                     modifier = Modifier.size(60.dp)
                                 )
                             } else {
-                                Text("Sin preview")
+                                Box(
+                                    modifier = Modifier.size(60.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("📄", style = MaterialTheme.typography.headlineMedium)
+                                }
                             }
                         },
                         modifier = Modifier
@@ -145,7 +192,6 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                     )
                     HorizontalDivider()
                 }
-
             }
         }
     }
