@@ -43,16 +43,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    LibraryScreen()
+                    AppRoot()
                 }
             }
         }
     }
 }
 
+@Composable
+private fun AppRoot() {
+    var selectedFile by remember { mutableStateOf<File?>(null) }
+    if (selectedFile == null) {
+        LibraryScreen(onOpen = { selectedFile = it })
+    } else {
+        PdfViewerScreen(file = selectedFile!!, onBack = { selectedFile = null })
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen() {
+fun LibraryScreen(onOpen: (File) -> Unit) {
     val context = LocalContext.current
     var pdfs by remember { mutableStateOf(listOf<File>()) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -79,7 +89,7 @@ fun LibraryScreen() {
                         clonePdfIntoApp(context, pickedUri)
                     }
                     pdfs = listAppPdfs(context)
-                    message = "PDF importado ✔"
+                    message = "PDF importado ✓"
                 }
             }
         }
@@ -130,9 +140,7 @@ fun LibraryScreen() {
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                message = "Abrirías: ${file.name}"
-                            }
+                            .clickable { onOpen(file) }
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                     HorizontalDivider()
