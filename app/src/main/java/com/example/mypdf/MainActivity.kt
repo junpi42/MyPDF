@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.Image
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -33,7 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
 import java.util.Date
 import android.graphics.Bitmap
-import coil.compose.rememberAsyncImagePainter
+import androidx.compose.ui.graphics.asImageBitmap
 
 
 class MainActivity : ComponentActivity() {
@@ -108,7 +109,7 @@ fun LibraryScreen() {
                 items(pdfs) { file ->
                     // Genera thumbnail en background
                     val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = file) {
-                        value = generatePdfThumbnail(file)
+                        value = withContext(Dispatchers.IO) { generatePdfThumbnail(file) }
                     }
 
                     ListItem(
@@ -118,8 +119,8 @@ fun LibraryScreen() {
                         },
                         leadingContent = {
                             if (thumbnail != null) {
-                                androidx.compose.foundation.Image(
-                                    painter = rememberAsyncImagePainter(thumbnail),
+                                Image(
+                                    bitmap = thumbnail!!.asImageBitmap(),
                                     contentDescription = "Preview PDF",
                                     modifier = Modifier.size(60.dp)
                                 )
