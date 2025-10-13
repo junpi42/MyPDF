@@ -1,0 +1,217 @@
+package com.example.mypdf
+
+import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import java.io.File
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfViewerScreen(file: File, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val activity = context as Activity
+
+    // Activar modo inmersivo y restaurarlo al salir
+    DisposableEffect(Unit) {
+        WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            WindowCompat.setDecorFitsSystemWindows(activity.window, true)
+        }
+    }
+
+    val holder = remember(file.path) { PdfRendererHolder(file) }
+
+    var pageCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { pageCount = holder.pageCount }
+
+    // Lista de bitmaps precargados (una entrada por página)
+    val bitmaps = remember { mutableStateListOf<Bitmap?>() }
+
+    // Asegurar tamaño de la lista al pageCount
+    LaunchedEffect(pageCount) {
+        if (pageCount > 0) {
+            bitmaps.clear()
+            repeat(pageCount) { bitmaps.add(null) }
+        }
+    }
+
+    // Tamaño de pantalla en px (para ajustar el ancho de cada página)
+    val config = LocalConfiguration.current
+    val screenWidthPx = (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
+
+    // Si cambia el ancho de pantalla, forzar re-render de todas las páginas al nuevo ancho
+    LaunchedEffect(screenWidthPx, pageCount) {
+        if (pageCount > 0 && bitmaps.size == pageCount) {
+            for (i in 0 until pageCount) {
+                val old = bitmaps[i]
+                if (old != null && !old.isRecycled) try { old.recycle() } catch (_: Exception) {}
+                bitmaps[i] = null
+            }
+        }
+    }
+
+    // Precarga: renderizar TODAS las páginas al ancho objetivo en background (paralelo controlado)
+    LaunchedEffect(pageCount, screenWidthPx) {
+        if (pageCount > 0 && screenWidthPx > 0 && bitmaps.size == pageCount) {
+            val maxParallel = minOf(4, Runtime.getRuntime().availableProcessors())
+            val semaphore = Semaphore(maxParallel)
+            for (i in 0 until pageCount) {
+                if (bitmaps[i] == null) {
+                    launch(Dispatchers.Default) {
+                        semaphore.withPermit {
+                            val bmp = holder.renderPageToWidth(i, screenWidthPx)
+                            if (bmp != null && i < bitmaps.size) {
+                                // Cambiar estado en el hilo principal
+                                withContext(Dispatchers.Main) {
+                                    bitmaps[i] = bmp
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Lista con todas las páginas precargadas, una debajo de la otra
+            if (pageCount <= 0) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Cargando…", color = Color.White)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(0.dp),
+
+                ) {
+                    items(pageCount) { index ->
+                        val bmp = if (index < bitmaps.size) bitmaps[index] else null
+                        PdfPageItem(index = index, bitmap = bmp)
+                    }
+                }
+            }
+
+            // Barra superior con botón atrás y total de páginas
+            val loadedCount by remember(bitmaps) { derivedStateOf { bitmaps.count { it != null } } }
+            TopAppBar(
+                title = { Text(text = "$loadedCount / $pageCount páginas", color = Color.White) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.Filled.ArrowBack,
+                            contentDescription = "Atrás",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0x66000000),
+                    titleContentColor = Color.White
+                )
+            )
+        }
+    }
+
+    // Cierre explícito del holder y reciclado de bitmaps al salir de la pantalla
+    DisposableEffect(holder) {
+        onDispose {
+            holder.close()
+            bitmaps.forEach { bmp ->
+                try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
+            }
+            bitmaps.clear()
+        }
+    }
+}
+
+@Composable
+private fun PdfPageItem(
+    index: Int,
+    bitmap: Bitmap?
+) {
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Página ${index + 1}",
+            modifier = Modifier.fillMaxWidth()
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Cargando página ${index + 1}…", color = Color.White)
+        }
+    }
+}
+
+private class PdfRendererHolder(file: File) {
+    private val pfd: ParcelFileDescriptor =
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    private val renderer: PdfRenderer = PdfRenderer(pfd)
+
+    val pageCount: Int get() = renderer.pageCount
+
+    fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
+        return try {
+            val page = renderer.openPage(index)
+            val srcW = page.width
+            val srcH = page.height
+            val scale = targetW.toFloat() / srcW
+            val outW = (srcW * scale).toInt().coerceAtLeast(1)
+            val outH = (srcH * scale).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            bitmap
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    fun close() {
+        try {
+            renderer.close()
+            pfd.close()
+        } catch (_: Exception) { }
+    }
+}
