@@ -7,6 +7,7 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -27,7 +28,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -61,6 +62,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     // Lista de bitmaps precargados (una entrada por página)
     val bitmaps = remember { mutableStateListOf<Bitmap?>() }
 
+    // Estado para controlar si las páginas están cargando
+    var pagesLoading by remember { mutableStateOf(true) }
+
     // Asegurar tamaño de la lista al pageCount
     LaunchedEffect(pageCount) {
         if (pageCount > 0) {
@@ -76,6 +80,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     // Si cambia el ancho de pantalla, forzar re-render de todas las páginas al nuevo ancho
     LaunchedEffect(screenWidthPx, pageCount) {
         if (pageCount > 0 && bitmaps.size == pageCount) {
+            pagesLoading = true
             for (i in 0 until pageCount) {
                 val old = bitmaps[i]
                 if (old != null && !old.isRecycled) try { old.recycle() } catch (_: Exception) {}
@@ -87,11 +92,14 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     // Precarga: renderizar TODAS las páginas al ancho objetivo en background (paralelo controlado)
     LaunchedEffect(pageCount, screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0 && bitmaps.size == pageCount) {
+            pagesLoading = true
             val maxParallel = minOf(4, Runtime.getRuntime().availableProcessors())
             val semaphore = Semaphore(maxParallel)
+            val jobs = mutableListOf<kotlinx.coroutines.Job>()
+
             for (i in 0 until pageCount) {
                 if (bitmaps[i] == null) {
-                    launch(Dispatchers.Default) {
+                    val job = launch(Dispatchers.Default) {
                         semaphore.withPermit {
                             val bmp = holder.renderPageToWidth(i, screenWidthPx)
                             if (bmp != null && i < bitmaps.size) {
@@ -102,39 +110,67 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                             }
                         }
                     }
+                    jobs.add(job)
                 }
             }
+
+            // Esperar a que todas las páginas terminen de cargarse
+            jobs.forEach { it.join() }
+            pagesLoading = false
         }
     }
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Lista con todas las páginas precargadas, una debajo de la otra
-            if (pageCount <= 0) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Cargando…", color = Color.White)
+            // Mostrar pantalla de carga mientras se precargan las páginas
+            if (pagesLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Color.White)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        val loadedCount = bitmaps.count { it != null }
+                        Text(
+                            text = "Cargando páginas: $loadedCount / $pageCount",
+                            color = Color.White
+                        )
+                    }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(0.dp),
+                // Lista con todas las páginas precargadas, una debajo de la otra
+                if (pageCount <= 0) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Cargando…", color = Color.White)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 0.dp),
 
-                ) {
-                    items(pageCount) { index ->
-                        val bmp = if (index < bitmaps.size) bitmaps[index] else null
-                        PdfPageItem(index = index, bitmap = bmp)
+                    ) {
+                        items(pageCount) { index ->
+                            val bmp = if (index < bitmaps.size) bitmaps[index] else null
+                            PdfPageItem(index = index, bitmap = bmp)
+                        }
                     }
                 }
             }
 
-            // Barra superior con botón atrás y total de páginas
+            // Barra superior con botón atrás y total de páginas (siempre visible)
             val loadedCount by remember(bitmaps) { derivedStateOf { bitmaps.count { it != null } } }
             TopAppBar(
-                title = { Text(text = "$loadedCount / $pageCount páginas", color = Color.White) },
+                title = {
+                    Text(
+                        text = if (pagesLoading) "Cargando..." else "$pageCount páginas",
+                        color = Color.White
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector = Icons.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Atrás",
                             tint = Color.White
                         )
