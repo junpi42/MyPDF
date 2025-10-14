@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.mypdf"
         minSdk = 21
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -58,6 +58,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // Agrego los iconos de Material (necesarios para androidx.compose.material.icons.*)
+    implementation("androidx.compose.material:material-icons-extended")
 
     // --- LIBRERÍAS DE TERCEROS ---
     implementation(libs.kotlinx.coroutines.android)
