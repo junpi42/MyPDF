@@ -250,11 +250,20 @@ class AudioTuner {
 
     private fun safeAudioRead(dst: ShortArray, size: Int): Int {
         val ar = audioRecord ?: return 0
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (ar.state != AudioRecord.STATE_INITIALIZED) {
+            throw IllegalStateException("AudioRecord no está inicializado")
+        }
+        val read = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             ar.read(dst, 0, size, AudioRecord.READ_BLOCKING)
         } else {
             ar.read(dst, 0, size)
         }
+        if (read < 0) {
+            // Detener el afinador y mostrar mensaje claro
+            stopTuning()
+            throw IllegalStateException("AudioRecord.read devolvió $read (micrófono no disponible o liberado)")
+        }
+        return read
     }
 }
 
