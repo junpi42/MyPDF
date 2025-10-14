@@ -1,7 +1,7 @@
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -10,10 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "com.example.mypdf"
-        minSdk = 21
+        minSdk = 23
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -39,33 +39,37 @@ android {
     }
 }
 
+// build.gradle.kts
+
+// En app/build.gradle.kts
+
 dependencies {
-    // Core + ciclo de vida
+    // --- DEPENDENCIAS PRINCIPALES Y DE CICLO DE VIDA ---
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation("androidx.activity:activity-compose:1.8.0")
-
-    // Activity Compose (incluye rememberLauncherForActivityResult)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // Compose con BOM del catálogo (mantiene versiones alineadas)
+    // --- INTERFAZ DE USUARIO (COMPOSE) ---
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
+    implementation("androidx.compose.foundation:foundation")
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // Tests
+    // Agrego los iconos de Material (necesarios para androidx.compose.material.icons.*)
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // --- LIBRERÍAS DE TERCEROS ---
+    implementation(libs.kotlinx.coroutines.android)
+
+    // --- DEPENDENCIAS DE TEST ---
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-
-    // Debug tools
-    debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-
-    // Coroutines (necesarias por Dispatchers/withContext/rememberCoroutineScope)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
