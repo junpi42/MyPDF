@@ -74,7 +74,11 @@ fun TunerScreen(tuner: AudioTuner) {
 
             when {
                 result == null -> Text("Sin dato aún…")
-                result?.errorMessage != null -> Text("Error: ${result?.errorMessage}")
+                result?.errorMessage != null -> {
+                    Text("Error: ${result?.errorMessage}", color = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { tuner.startTuning(scope) }) { Text("Reintentar afinador") }
+                }
                 else -> {
                     Text("Nota: ${result!!.targetNote}")
                     Text(
@@ -89,4 +93,3 @@ fun TunerScreen(tuner: AudioTuner) {
         }
     }
 }
-

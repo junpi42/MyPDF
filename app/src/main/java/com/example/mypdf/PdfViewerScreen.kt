@@ -320,10 +320,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 // Popup del selector de frecuencia
                 if (showFrequencySelector) {
                     FrequencySelectorPopup(
-                        onFrequencySelected = { freq ->
-                            tuner.setBaseFrequency(freq)
-                            showFrequencySelector = false
-                        },
+                        tuner = tuner,
                         onDismiss = { showFrequencySelector = false }
                     )
                 }
@@ -402,33 +399,129 @@ private class PdfRendererHolder(file: File) {
 
 @Composable
 fun FrequencySelectorPopup(
-    onFrequencySelected: (Double) -> Unit,
+    tuner: AudioTuner,
     onDismiss: () -> Unit
 ) {
+    val currentFreq by tuner.baseFrequency.collectAsState()
+    val isNoisy by tuner.noisyEnvironment.collectAsState()
+
     Popup(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
-                .padding(16.dp),
+                .padding(16.dp)
+                .widthIn(min = 280.dp),
             shape = RoundedCornerShape(8.dp),
             colors = CardDefaults.cardColors(
                 containerColor = Color.White
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
-                    text = "Selecciona la frecuencia base",
+                    text = "Ajustes del afinador",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     color = Color.Black
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                listOf(440.0, 432.0, 444.0, 415.0).forEach { freq ->
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Control de frecuencia base (Hz)
+                Text(
+                    text = "Frecuencia base",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = Color.Black
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
                     Button(
-                        onClick = { onFrequencySelected(freq) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        onClick = { tuner.decrementBaseFrequency(1.0) },
+                        modifier = Modifier.size(50.dp),
+                        contentPadding = PaddingValues(0.dp)
                     ) {
-                        Text("${freq.toInt()} Hz")
+                        Text("-", fontSize = 30.sp)
                     }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Text(
+                        text = "${currentFreq.toInt()} Hz",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black,
+                        modifier = Modifier.width(80.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Button(
+                        onClick = { tuner.incrementBaseFrequency(1.0) },
+                        modifier = Modifier.size(50.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("+", fontSize = 30.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider(color = Color.LightGray)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Selector de ambiente
+                Text(
+                    text = "Tipo de ambiente",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = Color.Black
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { tuner.setNoisyEnvironment(false) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!isNoisy) Color(0xFF4CAF50) else Color.Gray
+                        )
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(" Entorno Silencioso", fontSize = 20.sp)
+                        }
+                    }
+
+                    Button(
+                        onClick = { tuner.setNoisyEnvironment(true) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isNoisy) Color(0xFFFF6B6B) else Color.Gray
+                        )
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+                            Text("Entorno Ruidoso", fontSize = 20.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cerrar")
                 }
             }
         }

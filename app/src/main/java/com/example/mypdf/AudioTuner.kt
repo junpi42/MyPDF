@@ -4,6 +4,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,88 +44,93 @@ class AudioTuner {
     private var hpf: Biquad? = null // High-pass ~70 Hz
     private var lpf: Biquad? = null // Low-pass ~1500 Hz
 
+    companion object {
+        private const val TAG = "AudioTuner"
+    }
+
     fun startTuning(scope: CoroutineScope) {
         if (isRecording) return
 
         try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
+            // Etapa: init AudioRecord
+            try {
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize
+                )
+            } catch (e: Exception) {
+                reportError(stage = "init", e = e, details = "bufferSize=$bufferSize, sampleRate=$sampleRate")
+                return
+            }
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                _tuningState.value = TuningResult(
-                    isInTune = false,
-                    detectedFrequency = 0.0,
-                    targetNote = "Error",
-                    centsOff = 0.0,
-                    errorMessage = "No se pudo inicializar el micrófono"
-                )
+                reportError(stage = "init", details = "STATE_INITIALIZED esperado, state=${audioRecord?.state}")
                 return
             }
 
             // Configura filtros si el usuario marcó ambiente ruidoso
             configureFilters()
 
-            audioRecord?.startRecording()
+            // Etapa: startRecording
+            try {
+                audioRecord?.startRecording()
+            } catch (e: Exception) {
+                reportError(stage = "startRecording", e = e)
+                return
+            }
             isRecording = true
 
             recordingJob = scope.launch(Dispatchers.IO) {
                 val buffer = ShortArray(frameSize)
                 while (isRecording && isActive) {
-                    try {
-                        val read = safeAudioRead(buffer, frameSize)
-                        if (read > 0) {
-                            val frequency = detectFrequency(buffer, read)
-                            if (frequency > 0) {
-                                _tuningState.value = analyzeFrequency(frequency)
-                            }
-                        }
-                    } catch (e: IllegalStateException) {
-                        _tuningState.value = TuningResult(
-                            false, 0.0, "Error", 0.0,
-                            errorMessage = "AudioRecord falló: ${e.message}"
-                        )
-                        break
+                    // Etapa: read
+                    val read = try {
+                        safeAudioRead(buffer, frameSize)
                     } catch (e: Exception) {
-                        _tuningState.value = TuningResult(
-                            false, 0.0, "Error", 0.0,
-                            errorMessage = "Lectura de audio falló: ${e.message}"
-                        )
+                        reportError(stage = "read", e = e, details = "frameSize=$frameSize")
                         break
                     }
+                    if (read <= 0) continue
+
+                    // Etapa: detect
+                    val frequency = try {
+                        detectFrequency(buffer, read)
+                    } catch (e: Exception) {
+                        reportError(stage = "detect", e = e)
+                        break
+                    }
+                    if (frequency <= 0) continue
+
+                    // Etapa: analyze
+                    val result = try {
+                        analyzeFrequency(frequency)
+                    } catch (e: Exception) {
+                        reportError(stage = "analyze", e = e, details = "freq=$frequency")
+                        break
+                    }
+                    _tuningState.value = result
                 }
             }
         } catch (e: SecurityException) {
-            _tuningState.value = TuningResult(
-                isInTune = false,
-                detectedFrequency = 0.0,
-                targetNote = "Error",
-                centsOff = 0.0,
-                errorMessage = "Permiso de micrófono no concedido"
-            )
+            reportError(stage = "permission", e = e, details = "RECORD_AUDIO no concedido", stop = false)
         } catch (e: Exception) {
-            _tuningState.value = TuningResult(
-                isInTune = false,
-                detectedFrequency = 0.0,
-                targetNote = "Error",
-                centsOff = 0.0,
-                errorMessage = "Error: ${e.message}"
-            )
+            reportError(stage = "unknown", e = e)
         }
     }
 
-    fun stopTuning() {
+    fun stopTuning(clearState: Boolean = true) {
         isRecording = false
         recordingJob?.cancel()
         recordingJob = null
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
-        _tuningState.value = null
+        if (clearState) {
+            _tuningState.value = null
+        }
     }
 
     fun setBaseFrequency(freq: Double) {
@@ -240,8 +246,10 @@ class AudioTuner {
         val base = _baseFrequency.value
         val semitonesFromBase = 12 * log2(frequency / base)
         val closestSemitone = semitonesFromBase.roundToInt()
-        val octave = 4 + (closestSemitone / 12)
-        val noteIndex = ((closestSemitone % 12) + 9) % 12 // A está en índice 9
+        // Usar floorDiv para octavas negativas correctamente
+        val octave = 4 + Math.floorDiv(closestSemitone, 12)
+        // Índice de nota en 0..11 (A está en 9). Usar floorMod para evitar negativos.
+        val noteIndex = Math.floorMod(9 + closestSemitone, 12)
         val noteNames = listOf("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")
         val noteName = noteNames[noteIndex]
         val targetFreq = base * 2.0.pow(closestSemitone / 12.0)
@@ -249,9 +257,9 @@ class AudioTuner {
     }
 
     private fun safeAudioRead(dst: ShortArray, size: Int): Int {
-        val ar = audioRecord ?: return 0
+        val ar = audioRecord ?: throw IllegalStateException("AudioRecord es null")
         if (ar.state != AudioRecord.STATE_INITIALIZED) {
-            throw IllegalStateException("AudioRecord no está inicializado")
+            throw IllegalStateException("AudioRecord no está inicializado (state=${ar.state})")
         }
         val read = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             ar.read(dst, 0, size, AudioRecord.READ_BLOCKING)
@@ -259,11 +267,38 @@ class AudioTuner {
             ar.read(dst, 0, size)
         }
         if (read < 0) {
-            // Detener el afinador y mostrar mensaje claro
-            stopTuning()
-            throw IllegalStateException("AudioRecord.read devolvió $read (micrófono no disponible o liberado)")
+            throw IllegalStateException("READ_FAILED($read)")
+        }
+        if (read > dst.size) {
+            throw IndexOutOfBoundsException("read=$read > dst.size=${dst.size}")
         }
         return read
+    }
+
+    private fun reportError(stage: String, e: Throwable? = null, details: String? = null, stop: Boolean = true) {
+        val msg = buildString {
+            append("[")
+            append(stage)
+            append("] ")
+            if (details != null) {
+                append(details)
+                append(" ")
+            }
+            if (e != null) {
+                append(e::class.simpleName)
+                append(": ")
+                append(e.message)
+            }
+        }.ifBlank { "[$stage] error" }
+        Log.e(TAG, msg, e)
+        _tuningState.value = TuningResult(
+            isInTune = false,
+            detectedFrequency = 0.0,
+            targetNote = "Error",
+            centsOff = 0.0,
+            errorMessage = msg
+        )
+        if (stop) stopTuning(clearState = false)
     }
 }
 
