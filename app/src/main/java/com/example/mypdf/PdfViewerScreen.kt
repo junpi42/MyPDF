@@ -13,6 +13,7 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
@@ -38,6 +39,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Popup
+import android.util.LruCache
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,22 +86,31 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
+    // Holder con caché LRU y utilidades de render
     val holder = remember(file.path) { PdfRendererHolder(file) }
 
     var pageCount by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { pageCount = holder.pageCount }
 
-    // Lista de bitmaps precargados (una entrada por página)
-    val bitmaps = remember { mutableStateListOf<Bitmap?>() }
+    // Estado para bitmaps que se van cargando (solo los cargados se guardan aquí para recomposiciones)
+    val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
 
-    // Estado para controlar si las páginas están cargando
-    var pagesLoading by remember { mutableStateOf(true) }
+    // Estado adicional para encabezado (cargando...)
+    var initialLoading by remember { mutableStateOf(true) }
+
+    // Umbral de páginas para mostrar el visor (3 o el total si es menor)
+    val readyThreshold by remember(pageCount) { mutableStateOf(kotlin.math.min(3, kotlin.math.max(pageCount, 0))) }
+
+    // Estado para controlar si mostramos overlay inicial
+    var showInitialOverlay by remember { mutableStateOf(true) }
 
     // Asegurar tamaño de la lista al pageCount
     LaunchedEffect(pageCount) {
         if (pageCount > 0) {
-            bitmaps.clear()
-            repeat(pageCount) { bitmaps.add(null) }
+            pageBitmaps.clear()
+            repeat(pageCount) { pageBitmaps.add(null) }
+            showInitialOverlay = true
+            initialLoading = true
         }
     }
 
@@ -100,53 +118,207 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val config = LocalConfiguration.current
     val screenWidthPx = (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
 
-    // Si cambia el ancho de pantalla, forzar re-render de todas las páginas al nuevo ancho
-    LaunchedEffect(screenWidthPx, pageCount) {
-        if (pageCount > 0 && bitmaps.size == pageCount) {
-            pagesLoading = true
+    // Si cambia el ancho de pantalla, limpiar caché y forzar re-render de lo visible
+    LaunchedEffect(screenWidthPx) {
+        if (pageCount > 0 && screenWidthPx > 0) {
+            initialLoading = true
+            holder.clearCache()
             for (i in 0 until pageCount) {
-                val old = bitmaps[i]
+                val old = pageBitmaps.getOrNull(i)
                 if (old != null && !old.isRecycled) try { old.recycle() } catch (_: Exception) {}
-                bitmaps[i] = null
+                if (i < pageBitmaps.size) pageBitmaps[i] = null
             }
+            initialLoading = false
         }
     }
 
-    // Precarga: renderizar TODAS las páginas al ancho objetivo en background (paralelo controlado)
+    // Precarga de arranque: renderizar rápidamente las primeras páginas aunque la lista aún no sea visible
     LaunchedEffect(pageCount, screenWidthPx) {
-        if (pageCount > 0 && screenWidthPx > 0 && bitmaps.size == pageCount) {
-            pagesLoading = true
-            val maxParallel = minOf(4, Runtime.getRuntime().availableProcessors())
-            val semaphore = Semaphore(maxParallel)
-            val jobs = mutableListOf<kotlinx.coroutines.Job>()
-
-            for (i in 0 until pageCount) {
-                if (bitmaps[i] == null) {
-                    val job = launch(Dispatchers.Default) {
-                        semaphore.withPermit {
-                            val bmp = holder.renderPageToWidth(i, screenWidthPx)
-                            if (bmp != null && i < bitmaps.size) {
-                                // Cambiar estado en el hilo principal
-                                withContext(Dispatchers.Main) {
-                                    bitmaps[i] = bmp
+        if (pageCount > 0 && screenWidthPx > 0) {
+            val quickW = kotlin.math.min(screenWidthPx, 600)
+            val bootCount = kotlin.math.min(readyThreshold + 1, pageCount)
+            val semaphore = Semaphore(kotlin.math.min(2, Runtime.getRuntime().availableProcessors()))
+            coroutineScope {
+                repeat(bootCount) { idx ->
+                    if (pageBitmaps.getOrNull(idx) == null) {
+                        launch {
+                            semaphore.withPermit {
+                                val bmpQuick = withContext(Dispatchers.Default) {
+                                    holder.renderPageQuick(idx, quickW)
+                                }
+                                if (bmpQuick != null) {
+                                    withContext(Dispatchers.Main) {
+                                        if (idx < pageBitmaps.size) {
+                                            val prev = pageBitmaps[idx]
+                                            pageBitmaps[idx] = bmpQuick
+                                            if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                    jobs.add(job)
+                }
+            }
+            // Intentar subir a alta para la primera página (en background)
+            if (pageCount > 0) {
+                val hi = withContext(Dispatchers.Default) { holder.renderPageToWidth(0, screenWidthPx) }
+                if (hi != null && 0 < pageBitmaps.size) {
+                    val prev = pageBitmaps[0]
+                    pageBitmaps[0] = hi
+                    if (prev != null && prev != hi && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    // Actualizar visibilidad del overlay cuando se cumpla el umbral
+    LaunchedEffect(pageBitmaps, readyThreshold) {
+        snapshotFlow { pageBitmaps.count { it != null } }
+            .collectLatest { loaded ->
+                if (loaded >= readyThreshold) showInitialOverlay = false
+            }
+    }
+
+    // Fallback: si pasa 1.5s y tenemos al menos 1 página, ocultar overlay para no bloquear
+    LaunchedEffect(pageCount) {
+        if (pageCount > 0) {
+            delay(1500)
+            if (pageBitmaps.count { it != null } > 0) showInitialOverlay = false
+        }
+    }
+
+    // Lista perezosa y estrategia de carga por demanda con prefetch cercano y progresivo
+    val listState = rememberLazyListState()
+
+    // Estado de si se está desplazando (para controlar el placeholder)
+    var isScrolling by remember { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .distinctUntilChanged()
+            .collectLatest { isScrolling = it }
+    }
+
+    // Restaurar última página leída de este archivo
+    val lastPage = remember(file.path) { getLastPage(context, file).coerceAtLeast(0) }
+    var didScrollToLast by remember(file.path) { mutableStateOf(false) }
+
+    // Cuando la lista tenga items y aún no hayamos saltado, hacer scroll inicial
+    LaunchedEffect(pageCount, lastPage, showInitialOverlay) {
+        if (pageCount > 0 && !didScrollToLast) {
+            val target = lastPage.coerceIn(0, pageCount - 1)
+            // Esperar a que al menos el layout esté listo
+            if (!showInitialOverlay) {
+                try { listState.scrollToItem(target) } catch (_: Exception) {}
+                didScrollToLast = true
+            }
+        }
+    }
+
+    // Guardar la página visible actual cuando cambia la primera visible
+    LaunchedEffect(listState, pageCount) {
+        if (pageCount <= 0) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collectLatest { idx ->
+                saveLastPage(context, file, idx.coerceIn(0, pageCount - 1))
+            }
+    }
+
+    // Semaphore para limitar concurrencia de renderizado
+    val maxParallel = minOf(3, Runtime.getRuntime().availableProcessors())
+    val semaphore = remember { Semaphore(maxParallel) }
+
+    // Observador de la posición visible para disparar cargas con prioridad y cancelación automática
+    LaunchedEffect(listState, pageCount, screenWidthPx) {
+        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
+
+        snapshotFlow {
+            val first = listState.firstVisibleItemIndex
+            val visibles = listState.layoutInfo.visibleItemsInfo.map { it.index }.toSet()
+            Pair(first, visibles)
+        }.collectLatest { (firstIndex, visibleSet) ->
+            initialLoading = pageBitmaps.count { it != null } == 0
+
+            // Rango de interés alrededor de lo visible: extender más durante scroll para llenar las páginas visibles
+            val prefetchBefore = 3
+            val prefetchAfter = 8
+            val start = (firstIndex - prefetchBefore).coerceAtLeast(0)
+            val end = (firstIndex + prefetchAfter).coerceAtMost(pageCount - 1)
+
+            // Lista priorizada: visibles en orden, luego vecinos alternando +1, -1, +2, -2...
+            val prioritized = buildList {
+                addAll(visibleSet.sorted())
+                var offset = 1
+                while (true) {
+                    val p = firstIndex + offset
+                    val m = firstIndex - offset
+                    var added = false
+                    if (p <= end) { add(p); added = true }
+                    if (m >= start) { add(m); added = true }
+                    if (!added) break
+                    offset++
+                }
+            }.distinct().filter { it in start..end }
+
+            // Carga progresiva: primero baja resolución rápida
+            coroutineScope {
+                val quickW = minOf(screenWidthPx, 600)
+                // Renderizar TODAS las páginas visibles + prefetch en preview rápida sin límite de concurrencia
+                prioritized.forEach { idx ->
+                    if (pageBitmaps.getOrNull(idx) == null) {
+                        launch(Dispatchers.Default) {
+                            val bmpQuick = holder.renderPageQuick(idx, quickW)
+                            if (bmpQuick != null) {
+                                withContext(Dispatchers.Main) {
+                                    if (idx < pageBitmaps.size) {
+                                        val prev = pageBitmaps[idx]
+                                        pageBitmaps[idx] = bmpQuick
+                                        if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Esperar a que todas las páginas terminen de cargarse
-            jobs.forEach { it.join() }
-            pagesLoading = false
+            // Luego alta resolución para las visibles y el siguiente
+            coroutineScope {
+                val hiPriority = buildSet {
+                    addAll(visibleSet)
+                    val next = (visibleSet.maxOrNull() ?: firstIndex) + 1
+                    if (next in 0 until pageCount) add(next)
+                }
+                hiPriority.forEach { idx ->
+                    launch {
+                        semaphore.withPermit {
+                            val bmpHi = withContext(Dispatchers.Default) {
+                                holder.renderPageToWidth(idx, screenWidthPx)
+                            }
+                            if (bmpHi != null) {
+                                withContext(Dispatchers.Main) {
+                                    if (idx < pageBitmaps.size) {
+                                        // Reemplazar si el actual es de menor resolución
+                                        val current = pageBitmaps[idx]
+                                        val shouldReplace = current == null || (current.width < (screenWidthPx * 0.95f))
+                                        if (shouldReplace) {
+                                            pageBitmaps[idx] = bmpHi
+                                            if (current != null && current != bmpHi && !current.isRecycled) try { current.recycle() } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Mostrar pantalla de carga mientras se precargan las páginas
-            if (pagesLoading) {
+            // Overlay inicial hasta preparar al menos 3 páginas (o menos si el PDF es pequeño)
+            if (showInitialOverlay && pageCount > 0) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -154,39 +326,37 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = Color.White)
                         Spacer(modifier = Modifier.height(16.dp))
-                        val loadedCount = bitmaps.count { it != null }
+                        val loadedCount = pageBitmaps.count { it != null }
                         Text(
-                            text = "Cargando páginas: $loadedCount / $pageCount",
+                            text = "Preparando visor: $loadedCount / $pageCount",
                             color = Color.White
                         )
                     }
                 }
             } else {
-                // Lista con todas las páginas precargadas, una debajo de la otra
                 if (pageCount <= 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("Cargando…", color = Color.White)
                     }
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = 0.dp),
-
-                        ) {
+                    ) {
                         items(pageCount) { index ->
-                            val bmp = if (index < bitmaps.size) bitmaps[index] else null
-                            PdfPageItem(index = index, bitmap = bmp)
+                            val bmp = pageBitmaps.getOrNull(index)
+                            PdfPageItem(index = index, bitmap = bmp, showLoadingLabel = !isScrolling)
                         }
                     }
                 }
             }
 
             // Barra superior con botón atrás y total de páginas (siempre visible)
-            val loadedCount by remember(bitmaps) { derivedStateOf { bitmaps.count { it != null } } }
             TopAppBar(
                 title = {
                     Text(
-                        text = if (pagesLoading) "Cargando..." else "$pageCount páginas",
+                        text = if (initialLoading) "Cargando..." else "$pageCount páginas",
                         color = Color.White
                     )
                 },
@@ -331,12 +501,14 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     // Cierre explícito del holder y reciclado de bitmaps al salir de la pantalla
     DisposableEffect(holder) {
         onDispose {
+            // Guardar última página antes de cerrar
+            try { saveLastPage(context, file, listState.firstVisibleItemIndex) } catch (_: Exception) {}
             tuner.stopTuning()
             holder.close()
-            bitmaps.forEach { bmp ->
+            pageBitmaps.forEach { bmp ->
                 try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
             }
-            bitmaps.clear()
+            pageBitmaps.clear()
         }
     }
 }
@@ -344,7 +516,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
 @Composable
 private fun PdfPageItem(
     index: Int,
-    bitmap: Bitmap?
+    bitmap: Bitmap?,
+    showLoadingLabel: Boolean
 ) {
     if (bitmap != null) {
         Image(
@@ -356,10 +529,13 @@ private fun PdfPageItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp),
+                .height(200.dp)
+                .background(Color(0xFF1E1E1E)),
             contentAlignment = Alignment.Center
         ) {
-            Text("Cargando página ${index + 1}…", color = Color.White)
+            if (showLoadingLabel) {
+                CircularProgressIndicator(color = Color.White.copy(alpha = 0.8f), strokeWidth = 2.dp)
+            }
         }
     }
 }
@@ -369,30 +545,80 @@ private class PdfRendererHolder(file: File) {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer: PdfRenderer = PdfRenderer(pfd)
 
+    private val renderMutex = Mutex()
+
+    // Caché LRU para bitmaps (tamaño en KB)
+    private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024) // ~1/6 de la memoria o >=8MB
+    private val cache = object : LruCache<Int, Bitmap>(maxKb) {
+        override fun sizeOf(key: Int, value: Bitmap): Int {
+            return (value.byteCount / 1024)
+        }
+        // No reciclamos aquí para evitar invalidar referencias que esté usando la UI.
+        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap?, newValue: Bitmap?) {
+            // No-op
+        }
+    }
+
     val pageCount: Int get() = renderer.pageCount
 
-    fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
-        return try {
-            val page = renderer.openPage(index)
-            val srcW = page.width
-            val srcH = page.height
-            val scale = targetW.toFloat() / srcW
-            val outW = (srcW * scale).toInt().coerceAtLeast(1)
-            val outH = (srcH * scale).toInt().coerceAtLeast(1)
-            val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            bitmap
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
+    suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
+        // Si ya hay uno de tamaño suficiente, devolverlo.
+        cache.get(index)?.let { existing ->
+            if (existing.width >= quickTargetW * 0.95f) return existing
         }
+        return renderInternal(index, quickTargetW, Bitmap.Config.RGB_565)
+    }
+
+    suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
+        // Revisar caché y actualizar si es de menor resolución
+        cache.get(index)?.let { existing ->
+            if (existing.width >= targetW * 0.95f) return existing
+        }
+        return renderInternal(index, targetW, Bitmap.Config.ARGB_8888)
+    }
+
+    private suspend fun renderInternal(index: Int, targetW: Int, config: Bitmap.Config): Bitmap? {
+        suspend fun attempt(): Bitmap? {
+            var page: PdfRenderer.Page? = null
+            return try {
+                renderMutex.withLock {
+                    page = renderer.openPage(index)
+                    val srcW = page!!.width
+                    val srcH = page!!.height
+                    val scale = (targetW.toFloat() / srcW).coerceAtLeast(0.1f)
+                    val outW = (srcW * scale).toInt().coerceAtLeast(1)
+                    val outH = (srcH * scale).toInt().coerceAtLeast(1)
+                    val bitmap = Bitmap.createBitmap(outW, outH, config)
+                    page!!.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    cache.put(index, bitmap)
+                    bitmap
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            } finally {
+                try { page?.close() } catch (_: Exception) {}
+            }
+        }
+        // Primer intento
+        val first = attempt()
+        if (first != null) return first
+        // Pequeña espera y reintento único
+        try { kotlinx.coroutines.delay(80) } catch (_: Exception) {}
+        return attempt()
+    }
+
+    fun clearCache() {
+        try {
+            cache.evictAll()
+        } catch (_: Exception) {}
     }
 
     fun close() {
         try {
             renderer.close()
             pfd.close()
+            cache.evictAll()
         } catch (_: Exception) { }
     }
 }
@@ -472,7 +698,7 @@ fun FrequencySelectorPopup(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider(color = Color.LightGray)
+                HorizontalDivider(color = Color.LightGray)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Selector de ambiente
