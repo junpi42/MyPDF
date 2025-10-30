@@ -11,38 +11,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.*
 
 class AudioTuner {
-    // Audio
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
     private var recordingJob: Job? = null
 
-    // Estado de referencia A4 y ambiente
     private val _baseFrequency = MutableStateFlow(442.0)
     val baseFrequency: StateFlow<Double> = _baseFrequency
 
     private val _noisyEnvironment = MutableStateFlow(false)
     val noisyEnvironment: StateFlow<Boolean> = _noisyEnvironment
 
-    // Estado del afinador
     private val _tuningState = MutableStateFlow<TuningResult?>(null)
     val tuningState: StateFlow<TuningResult?> = _tuningState
 
-    // Parámetros de audio
     private val sampleRate = 44100
-    private val frameSize = 4096 // ≈93 ms (mejor latencia que 8192)
+    private val frameSize = 4096
     private val bufferSize = AudioRecord.getMinBufferSize(
         sampleRate,
         AudioFormat.CHANNEL_IN_MONO,
         AudioFormat.ENCODING_PCM_16BIT
     ).coerceAtLeast(frameSize)
 
-    // Umbrales (se aplican según ambiente)
-    private val baseMagnitudeThreshold = 0.010  // normal
-    private val noisyMagnitudeThreshold = 0.030 // ambiente ruidoso (más estricto)
+    private val baseMagnitudeThreshold = 0.010
+    private val noisyMagnitudeThreshold = 0.030
 
-    // Filtros (activados sólo en ambiente ruidoso)
-    private var hpf: Biquad? = null // High-pass ~70 Hz
-    private var lpf: Biquad? = null // Low-pass ~1500 Hz
+    private var hpf: Biquad? = null
+    private var lpf: Biquad? = null
 
     companion object {
         private const val TAG = "AudioTuner"
@@ -52,7 +46,6 @@ class AudioTuner {
         if (isRecording) return
 
         try {
-            // Etapa: init AudioRecord
             try {
                 audioRecord = AudioRecord(
                     MediaRecorder.AudioSource.MIC,
@@ -71,10 +64,8 @@ class AudioTuner {
                 return
             }
 
-            // Configura filtros si el usuario marcó ambiente ruidoso
             configureFilters()
 
-            // Etapa: startRecording
             try {
                 audioRecord?.startRecording()
             } catch (e: Exception) {
@@ -86,7 +77,6 @@ class AudioTuner {
             recordingJob = scope.launch(Dispatchers.IO) {
                 val buffer = ShortArray(frameSize)
                 while (isRecording && isActive) {
-                    // Etapa: read
                     val read = try {
                         safeAudioRead(buffer, frameSize)
                     } catch (e: Exception) {
@@ -95,7 +85,6 @@ class AudioTuner {
                     }
                     if (read <= 0) continue
 
-                    // Etapa: detect
                     val frequency = try {
                         detectFrequency(buffer, read)
                     } catch (e: Exception) {
@@ -104,7 +93,6 @@ class AudioTuner {
                     }
                     if (frequency <= 0) continue
 
-                    // Etapa: analyze
                     val result = try {
                         analyzeFrequency(frequency)
                     } catch (e: Exception) {
@@ -147,12 +135,11 @@ class AudioTuner {
 
     fun setNoisyEnvironment(enabled: Boolean) {
         _noisyEnvironment.value = enabled
-        configureFilters() // (re)configura en caliente
+        configureFilters()
     }
 
     private fun configureFilters() {
         if (_noisyEnvironment.value) {
-            // HPF ~70 Hz, Q 0.707; LPF ~1500 Hz, Q 0.707
             hpf = Biquad.highPass(sampleRate.toDouble(), 70.0, q = 0.707)
             lpf = Biquad.lowPass(sampleRate.toDouble(), 1500.0, q = 0.707)
         } else {
@@ -165,31 +152,26 @@ class AudioTuner {
         val sr = sampleRate.toDouble()
         val audio = FloatArray(size) { buffer[it].toFloat() / Short.MAX_VALUE }
 
-        // Filtro pasabanda si ambiente ruidoso
         if (_noisyEnvironment.value) {
             hpf?.processInPlace(audio)
             lpf?.processInPlace(audio)
         }
 
-        // Umbral de magnitud dependiente del ambiente
         val threshold = if (_noisyEnvironment.value) noisyMagnitudeThreshold else baseMagnitudeThreshold
         val magnitude = audio.sumOf { abs(it).toDouble() } / size
         if (magnitude < threshold) return 0.0
 
-        // Ventana Hann
         for (i in 0 until size) {
             val w = 0.5f * (1f - cos(2f * Math.PI.toFloat() * i / (size - 1)))
             audio[i] *= w
         }
 
-        // Limitar lags al rango 80–1200 Hz (ajústalo si quieres más grave/agudo)
         val minLag = (sr / 1200.0).toInt().coerceAtLeast(20)
         val maxLag = (sr / 80.0).toInt().coerceAtMost(size / 2)
 
         var bestLag = -1
         var bestCorr = Double.NEGATIVE_INFINITY
 
-        // Autocorrelación simple
         for (lag in minLag..maxLag) {
             var corr = 0.0
             var i = 0
@@ -205,7 +187,6 @@ class AudioTuner {
         }
         if (bestLag <= 0) return 0.0
 
-        // Interpolación parabólica alrededor del pico (submuestra)
         val y0 = correlationAt(audio, bestLag - 1)
         val y1 = correlationAt(audio, bestLag)
         val y2 = correlationAt(audio, bestLag + 1)
@@ -246,9 +227,7 @@ class AudioTuner {
         val base = _baseFrequency.value
         val semitonesFromBase = 12 * log2(frequency / base)
         val closestSemitone = semitonesFromBase.roundToInt()
-        // Usar floorDiv para octavas negativas correctamente
         val octave = 4 + Math.floorDiv(closestSemitone, 12)
-        // Índice de nota en 0..11 (A está en 9). Usar floorMod para evitar negativos.
         val noteIndex = Math.floorMod(9 + closestSemitone, 12)
         val noteNames = listOf("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")
         val noteName = noteNames[noteIndex]
@@ -310,7 +289,6 @@ data class TuningResult(
     val errorMessage: String? = null
 )
 
-/** Biquad básico (RBJ) con helpers HP/LP */
 private class Biquad(
     private var b0: Double, private var b1: Double, private var b2: Double,
     private var a0: Double, private var a1: Double, private var a2: Double

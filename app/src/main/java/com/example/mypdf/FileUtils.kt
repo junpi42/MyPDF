@@ -13,7 +13,7 @@ fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitma
     return try {
         val fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         val renderer = PdfRenderer(fileDescriptor)
-        val page = renderer.openPage(0) // primera página
+        val page = renderer.openPage(0)
 
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -27,25 +27,48 @@ fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitma
     }
 }
 
-// Carpeta propia de la app para guardar los PDFs clonados
 fun appPdfDir(context: Context): File {
     val dir = File(context.filesDir, "pdf_library")
     if (!dir.exists()) dir.mkdirs()
     return dir
 }
 
-// Lista todos los PDFs guardados en la carpeta de la app
+fun libraryDirFor(context: Context, relativePath: String): File {
+    val clean = relativePath.trim().trimStart('/').trimEnd('/')
+    val safe = clean.split('/').filter { it.isNotBlank() && it != ".." }.joinToString(File.separator)
+    val base = appPdfDir(context)
+    val target = if (safe.isEmpty()) base else File(base, safe)
+    if (!target.exists()) target.mkdirs()
+    return target
+}
+
 fun listAppPdfs(context: Context): List<File> {
     val dir = appPdfDir(context)
     return dir.listFiles { f -> f.isFile && f.extension.equals("pdf", ignoreCase = true) }
         ?.sortedByDescending { it.lastModified() } ?: emptyList()
 }
 
-// Clona (copia) un PDF elegido con el selector del sistema a la carpeta de la app
-fun clonePdfIntoApp(context: Context, src: Uri): File {
+fun listLibraryFolder(context: Context, relativePath: String): Pair<List<File>, List<File>> {
+    val dir = libraryDirFor(context, relativePath)
+    val children = dir.listFiles() ?: emptyArray()
+    val folders = children.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+    val pdfs = children.filter { it.isFile && it.extension.equals("pdf", true) }
+    return folders to pdfs
+}
+
+fun createLibraryFolder(context: Context, relativePath: String, name: String): File? {
+    val safeName = name.trim().replace(Regex("[^a-zA-Z0-9._ -]"), "_").trim().ifEmpty { return null }
+    val dir = libraryDirFor(context, relativePath)
+    val target = File(dir, safeName)
+    if (target.exists()) return target.takeIf { it.isDirectory }
+    return if (target.mkdirs()) target else null
+}
+
+fun clonePdfIntoApp(context: Context, src: Uri, relativePath: String = ""): File {
     val name = queryDisplayName(context, src) ?: "document.pdf"
     val safeName = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-    val destinationFile = uniqueName(File(appPdfDir(context), safeName))
+    val destDir = libraryDirFor(context, relativePath)
+    val destinationFile = uniqueName(File(destDir, safeName))
 
     context.contentResolver.openInputStream(src).use { inputStream ->
         destinationFile.outputStream().use { outputStream ->
@@ -54,8 +77,6 @@ fun clonePdfIntoApp(context: Context, src: Uri): File {
     }
     return destinationFile
 }
-
-// --- Auxiliares (quedan privados en este archivo) ---
 
 private fun queryDisplayName(context: Context, uri: Uri): String? {
     val cursor = context.contentResolver.query(uri, null, null, null, null) ?: return null

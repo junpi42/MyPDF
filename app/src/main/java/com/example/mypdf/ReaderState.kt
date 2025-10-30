@@ -21,4 +21,3 @@ fun saveLastPage(context: Context, file: File, pageIndex: Int) {
         prefs.edit { putInt(keyFor(file), pageIndex.coerceAtLeast(0)) }
     } catch (_: Exception) { }
 }
-
