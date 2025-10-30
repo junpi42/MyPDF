@@ -55,15 +55,12 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    // Estado del afinador
     var tunerActive by remember { mutableStateOf(false) }
     val tuner = remember { AudioTuner() }
     val tuningResult by tuner.tuningState.collectAsState()
 
-    // Estado para el selector de frecuencia
     var showFrequencySelector by remember { mutableStateOf(false) }
 
-    // Launcher para solicitar permiso de micrófono
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -73,7 +70,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Activar modo inmersivo y restaurarlo al salir
     DisposableEffect(Unit) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
         val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
@@ -92,19 +88,14 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     var pageCount by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { pageCount = holder.pageCount }
 
-    // Estado para bitmaps que se van cargando (solo los cargados se guardan aquí para recomposiciones)
     val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
 
-    // Estado adicional para encabezado (cargando...)
     var initialLoading by remember { mutableStateOf(true) }
 
-    // Umbral de páginas para mostrar el visor (3 o el total si es menor)
     val readyThreshold by remember(pageCount) { mutableStateOf(kotlin.math.min(3, kotlin.math.max(pageCount, 0))) }
 
-    // Estado para controlar si mostramos overlay inicial
     var showInitialOverlay by remember { mutableStateOf(true) }
 
-    // Asegurar tamaño de la lista al pageCount
     LaunchedEffect(pageCount) {
         if (pageCount > 0) {
             pageBitmaps.clear()
@@ -114,11 +105,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Tamaño de pantalla en px (para ajustar el ancho de cada página)
     val config = LocalConfiguration.current
     val screenWidthPx = (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
 
-    // Si cambia el ancho de pantalla, limpiar caché y forzar re-render de lo visible
     LaunchedEffect(screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0) {
             initialLoading = true
@@ -132,7 +121,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Precarga de arranque: renderizar rápidamente las primeras páginas aunque la lista aún no sea visible
     LaunchedEffect(pageCount, screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0) {
             val quickW = kotlin.math.min(screenWidthPx, 600)
@@ -160,7 +148,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     }
                 }
             }
-            // Intentar subir a alta para la primera página (en background)
             if (pageCount > 0) {
                 val hi = withContext(Dispatchers.Default) { holder.renderPageToWidth(0, screenWidthPx) }
                 if (hi != null && 0 < pageBitmaps.size) {
@@ -172,7 +159,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Actualizar visibilidad del overlay cuando se cumpla el umbral
     LaunchedEffect(pageBitmaps, readyThreshold) {
         snapshotFlow { pageBitmaps.count { it != null } }
             .collectLatest { loaded ->
@@ -180,7 +166,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             }
     }
 
-    // Fallback: si pasa 1.5s y tenemos al menos 1 página, ocultar overlay para no bloquear
     LaunchedEffect(pageCount) {
         if (pageCount > 0) {
             delay(1500)
@@ -188,10 +173,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Lista perezosa y estrategia de carga por demanda con prefetch cercano y progresivo
     val listState = rememberLazyListState()
 
-    // Estado de si se está desplazando (para controlar el placeholder)
     var isScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
@@ -199,15 +182,12 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             .collectLatest { isScrolling = it }
     }
 
-    // Restaurar última página leída de este archivo
     val lastPage = remember(file.path) { getLastPage(context, file).coerceAtLeast(0) }
     var didScrollToLast by remember(file.path) { mutableStateOf(false) }
 
-    // Cuando la lista tenga items y aún no hayamos saltado, hacer scroll inicial
     LaunchedEffect(pageCount, lastPage, showInitialOverlay) {
         if (pageCount > 0 && !didScrollToLast) {
             val target = lastPage.coerceIn(0, pageCount - 1)
-            // Esperar a que al menos el layout esté listo
             if (!showInitialOverlay) {
                 try { listState.scrollToItem(target) } catch (_: Exception) {}
                 didScrollToLast = true
@@ -215,7 +195,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Guardar la página visible actual cuando cambia la primera visible
     LaunchedEffect(listState, pageCount) {
         if (pageCount <= 0) return@LaunchedEffect
         snapshotFlow { listState.firstVisibleItemIndex }
@@ -224,11 +203,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             }
     }
 
-    // Semaphore para limitar concurrencia de renderizado
     val maxParallel = minOf(3, Runtime.getRuntime().availableProcessors())
     val semaphore = remember { Semaphore(maxParallel) }
 
-    // Observador de la posición visible para disparar cargas con prioridad y cancelación automática
     LaunchedEffect(listState, pageCount, screenWidthPx) {
         if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
 
@@ -239,13 +216,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }.collectLatest { (firstIndex, visibleSet) ->
             initialLoading = pageBitmaps.count { it != null } == 0
 
-            // Rango de interés alrededor de lo visible: extender más durante scroll para llenar las páginas visibles
             val prefetchBefore = 3
             val prefetchAfter = 8
             val start = (firstIndex - prefetchBefore).coerceAtLeast(0)
             val end = (firstIndex + prefetchAfter).coerceAtMost(pageCount - 1)
 
-            // Lista priorizada: visibles en orden, luego vecinos alternando +1, -1, +2, -2...
             val prioritized = buildList {
                 addAll(visibleSet.sorted())
                 var offset = 1
@@ -260,10 +235,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 }
             }.distinct().filter { it in start..end }
 
-            // Carga progresiva: primero baja resolución rápida
             coroutineScope {
                 val quickW = minOf(screenWidthPx, 600)
-                // Renderizar TODAS las páginas visibles + prefetch en preview rápida sin límite de concurrencia
                 prioritized.forEach { idx ->
                     if (pageBitmaps.getOrNull(idx) == null) {
                         launch(Dispatchers.Default) {
@@ -282,7 +255,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 }
             }
 
-            // Luego alta resolución para las visibles y el siguiente
             coroutineScope {
                 val hiPriority = buildSet {
                     addAll(visibleSet)
@@ -298,7 +270,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                             if (bmpHi != null) {
                                 withContext(Dispatchers.Main) {
                                     if (idx < pageBitmaps.size) {
-                                        // Reemplazar si el actual es de menor resolución
                                         val current = pageBitmaps[idx]
                                         val shouldReplace = current == null || (current.width < (screenWidthPx * 0.95f))
                                         if (shouldReplace) {
@@ -317,7 +288,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Overlay inicial hasta preparar al menos 3 páginas (o menos si el PDF es pequeño)
             if (showInitialOverlay && pageCount > 0) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -352,7 +322,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 }
             }
 
-            // Barra superior con botón atrás y total de páginas (siempre visible)
             TopAppBar(
                 title = {
                     Text(
@@ -375,14 +344,12 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             )
 
-            // Botón flotante del afinador (abajo a la derecha)
             FloatingActionButton(
                 onClick = {
                     if (tunerActive) {
                         tunerActive = false
                         tuner.stopTuning()
                     } else {
-                        // Solicitar permiso si es necesario
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
@@ -398,7 +365,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             }
 
-            // Panel del afinador (cuando está activo)
             if (tunerActive) {
                 Card(
                     modifier = Modifier
@@ -416,7 +382,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                             .fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Indicador visual de afinación
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -454,7 +419,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Información de la nota detectada
                         tuningResult?.let { result ->
                             if (result.errorMessage == null) {
                                 Text(
@@ -470,7 +434,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                     fontSize = 16.sp
                                 )
 
-                                // Mostrar cents de diferencia
                                 val centsText = if (result.centsOff > 0) {
                                     String.format("+%.0f cents (alto)", result.centsOff)
                                 } else {
@@ -487,7 +450,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     }
                 }
 
-                // Popup del selector de frecuencia
                 if (showFrequencySelector) {
                     FrequencySelectorPopup(
                         tuner = tuner,
@@ -498,10 +460,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // Cierre explícito del holder y reciclado de bitmaps al salir de la pantalla
     DisposableEffect(holder) {
         onDispose {
-            // Guardar última página antes de cerrar
             try { saveLastPage(context, file, listState.firstVisibleItemIndex) } catch (_: Exception) {}
             tuner.stopTuning()
             holder.close()
@@ -547,22 +507,18 @@ private class PdfRendererHolder(file: File) {
 
     private val renderMutex = Mutex()
 
-    // Caché LRU para bitmaps (tamaño en KB)
-    private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024) // ~1/6 de la memoria o >=8MB
+    private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
     private val cache = object : LruCache<Int, Bitmap>(maxKb) {
         override fun sizeOf(key: Int, value: Bitmap): Int {
             return (value.byteCount / 1024)
         }
-        // No reciclamos aquí para evitar invalidar referencias que esté usando la UI.
         override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap?, newValue: Bitmap?) {
-            // No-op
         }
     }
 
     val pageCount: Int get() = renderer.pageCount
 
     suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
-        // Si ya hay uno de tamaño suficiente, devolverlo.
         cache.get(index)?.let { existing ->
             if (existing.width >= quickTargetW * 0.95f) return existing
         }
@@ -570,7 +526,6 @@ private class PdfRendererHolder(file: File) {
     }
 
     suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
-        // Revisar caché y actualizar si es de menor resolución
         cache.get(index)?.let { existing ->
             if (existing.width >= targetW * 0.95f) return existing
         }
@@ -600,10 +555,8 @@ private class PdfRendererHolder(file: File) {
                 try { page?.close() } catch (_: Exception) {}
             }
         }
-        // Primer intento
         val first = attempt()
         if (first != null) return first
-        // Pequeña espera y reintento único
         try { kotlinx.coroutines.delay(80) } catch (_: Exception) {}
         return attempt()
     }
@@ -654,7 +607,6 @@ fun FrequencySelectorPopup(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Control de frecuencia base (Hz)
                 Text(
                     text = "Frecuencia base",
                     fontWeight = FontWeight.Medium,
@@ -701,7 +653,6 @@ fun FrequencySelectorPopup(
                 HorizontalDivider(color = Color.LightGray)
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Selector de ambiente
                 Text(
                     text = "Tipo de ambiente",
                     fontWeight = FontWeight.Medium,
