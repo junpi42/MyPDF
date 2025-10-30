@@ -82,6 +82,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
+    // Holder con caché LRU y utilidades de render
     val holder = remember(file.path) { PdfRendererHolder(file) }
 
     var pageCount by remember { mutableStateOf(0) }
