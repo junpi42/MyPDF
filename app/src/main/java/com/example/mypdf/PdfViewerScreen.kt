@@ -1,52 +1,73 @@
 package com.example.mypdf
 
+import android.Manifest
 import android.app.Activity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.util.LruCache
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import java.io.File
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MusicNote
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import android.Manifest
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.window.Popup
-import android.util.LruCache
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
+data class DrawingPath(
+    val points: List<Offset>, // puntos normalizados [0..1]
+    val color: Color,
+    val strokeWidth: Float,   // ancho normalizado relativo al ancho del lienzo
+    val isEraser: Boolean = false
+)
+
+data class PageAnnotations(
+    val pageIndex: Int,
+    val paths: MutableList<DrawingPath> = mutableListOf()
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,10 +76,61 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
+    var editMode by remember { mutableStateOf(false) }
+    var selectedTool by remember { mutableStateOf("pen") }
+    var penColor by remember { mutableStateOf(Color.Red) }
+    var strokeWidth by remember { mutableStateOf(0.006f) }
+    var showColorPicker by remember { mutableStateOf(false) }
+
+    // ===== anotaciones en memoria =====
+    val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
+
+    // ===== archivo de anotaciones + guardado diferido (MOVED ARRIBA) =====
+    val annFile = remember(file.path) { File(file.parentFile, file.nameWithoutExtension + ".ann.json") }
+    var saveJob by remember { mutableStateOf<Job?>(null) }
+    val scheduleSave: () -> Unit = {
+        saveJob?.cancel()
+        saveJob = scope.launch(Dispatchers.IO) {
+            delay(400)
+            try {
+                val pages = JSONArray()
+                annotations.toSortedMap().forEach { (idx, page) ->
+                    val jPage = JSONObject()
+                    jPage.put("index", idx)
+                    val jPaths = JSONArray()
+                    page.paths.forEach { p ->
+                        val jP = JSONObject()
+                        jP.put("e", p.isEraser)
+                        jP.put("c", p.color.toArgb())
+                        jP.put("w", p.strokeWidth) // normalizado
+                        val pts = JSONArray()
+                        p.points.forEach { o ->
+                            val pair = JSONArray()
+                            pair.put(o.x)
+                            pair.put(o.y)
+                            pts.put(pair)
+                        }
+                        jP.put("pts", pts)
+                        jPaths.put(jP)
+                    }
+                    jPage.put("paths", jPaths)
+                    pages.put(jPage)
+                }
+                val root = JSONObject()
+                root.put("version", 1)
+                root.put("pages", pages)
+                val tmp = File(annFile.parentFile, annFile.name + ".tmp")
+                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
+                if (annFile.exists()) annFile.delete()
+                tmp.renameTo(annFile)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // ===== afinador =====
     var tunerActive by remember { mutableStateOf(false) }
     val tuner = remember { AudioTuner() }
     val tuningResult by tuner.tuningState.collectAsState()
-
     var showFrequencySelector by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -70,6 +142,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
+    // pantalla completa
     DisposableEffect(Unit) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
         val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
@@ -316,12 +389,26 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     ) {
                         items(pageCount) { index ->
                             val bmp = pageBitmaps.getOrNull(index)
-                            PdfPageItem(index = index, bitmap = bmp, showLoadingLabel = !isScrolling)
+                            PdfPageItem(
+                                index = index,
+                                bitmap = bmp,
+                                showLoadingLabel = !isScrolling,
+                                editMode = editMode,
+                                annotations = annotations.getOrPut(index) { PageAnnotations(index) },
+                                selectedTool = selectedTool,
+                                penColor = penColor,
+                                strokeWidth = strokeWidth,
+                                onPathAdded = { path ->
+                                    annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
+                                    scheduleSave()
+                                }
+                            )
                         }
                     }
                 }
             }
 
+            // top bar (volver, info)
             TopAppBar(
                 title = {
                     Text(
@@ -344,27 +431,74 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             )
 
-            FloatingActionButton(
-                onClick = {
-                    if (tunerActive) {
-                        tunerActive = false
-                        tuner.stopTuning()
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
+            // FABs
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(16.dp),
-                containerColor = if (tunerActive) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.MusicNote,
-                    contentDescription = if (tunerActive) "Desactivar afinador" else "Activar afinador",
-                    tint = Color.White
+                FloatingActionButton(
+                    onClick = { editMode = !editMode },
+                    containerColor = if (editMode) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
+                ) {
+                    Icon(
+                        imageVector = if (editMode) Icons.Default.Close else Icons.Default.Edit,
+                        contentDescription = if (editMode) "Cerrar editor" else "Abrir editor",
+                        tint = Color.White
+                    )
+                }
+
+                FloatingActionButton(
+                    onClick = {
+                        if (tunerActive) {
+                            tunerActive = false
+                            tuner.stopTuning()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    containerColor = if (tunerActive) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = if (tunerActive) "Desactivar afinador" else "Activar afinador",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            // barra derecha solo si estamos editando
+            if (editMode) {
+                RightToolBar(
+                    selectedTool = selectedTool,
+                    penColor = penColor,
+                    strokeWidth = strokeWidth,
+                    onSelectTool = { selectedTool = it },
+                    onColorClick = { showColorPicker = true },
+                    onStrokeChange = { strokeWidth = it },
+                    onUndo = {
+                        val currentPage = listState.firstVisibleItemIndex
+                        annotations[currentPage]?.paths?.removeLastOrNull()
+                        scheduleSave()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .padding(end = 90.dp)
                 )
             }
 
+            // selector de color
+            if (showColorPicker) {
+                ColorPickerDialog(
+                    currentColor = penColor,
+                    onColorSelected = { penColor = it },
+                    onDismiss = { showColorPicker = false }
+                )
+            }
+
+            // afinador
             if (tunerActive) {
                 Card(
                     modifier = Modifier
@@ -460,6 +594,54 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
+    // ===== cargar anotaciones guardadas =====
+    LaunchedEffect(annFile.path) {
+        withContext(Dispatchers.IO) {
+            if (annFile.exists()) {
+                try {
+                    val text = FileInputStream(annFile).use { it.readBytes().toString(Charsets.UTF_8) }
+                    val root = JSONObject(text)
+                    val pages = root.optJSONArray("pages") ?: JSONArray()
+                    val loaded = mutableMapOf<Int, PageAnnotations>()
+                    for (i in 0 until pages.length()) {
+                        val jp = pages.getJSONObject(i)
+                        val idx = jp.optInt("index", i)
+                        val jPaths = jp.optJSONArray("paths") ?: JSONArray()
+                        val list = mutableListOf<DrawingPath>()
+                        for (k in 0 until jPaths.length()) {
+                            val jpath = jPaths.getJSONObject(k)
+                            val isE = jpath.optBoolean("e", false)
+                            val colorInt = jpath.optInt("c", 0xFF000000.toInt())
+                            val wNorm = jpath.optDouble("w", 0.005).toFloat()
+                            val ptsArr = jpath.optJSONArray("pts") ?: JSONArray()
+                            val pts = mutableListOf<Offset>()
+                            for (pIdx in 0 until ptsArr.length()) {
+                                val pair = ptsArr.getJSONArray(pIdx)
+                                val x = pair.optDouble(0, 0.0).toFloat()
+                                val y = pair.optDouble(1, 0.0).toFloat()
+                                pts.add(Offset(x, y))
+                            }
+                            list.add(
+                                DrawingPath(
+                                    points = pts,
+                                    color = Color(colorInt),
+                                    strokeWidth = wNorm,
+                                    isEraser = isE
+                                )
+                            )
+                        }
+                        loaded[idx] = PageAnnotations(idx, list)
+                    }
+                    withContext(Dispatchers.Main) {
+                        annotations.clear()
+                        annotations.putAll(loaded)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // ===== onDispose: guardar y limpiar =====
     DisposableEffect(holder) {
         onDispose {
             try { saveLastPage(context, file, listState.firstVisibleItemIndex) } catch (_: Exception) {}
@@ -469,22 +651,155 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
             }
             pageBitmaps.clear()
+            // guardado final bloqueante
+            runCatching {
+                val pages = JSONArray()
+                annotations.toSortedMap().forEach { (idx, page) ->
+                    val jPage = JSONObject()
+                    jPage.put("index", idx)
+                    val jPaths = JSONArray()
+                    page.paths.forEach { p ->
+                        val jP = JSONObject()
+                        jP.put("e", p.isEraser)
+                        jP.put("c", p.color.toArgb())
+                        jP.put("w", p.strokeWidth)
+                        val pts = JSONArray()
+                        p.points.forEach { o ->
+                            val pair = JSONArray(); pair.put(o.x); pair.put(o.y); pts.put(pair)
+                        }
+                        jP.put("pts", pts)
+                        jPaths.put(jP)
+                    }
+                    jPage.put("paths", jPaths)
+                    pages.put(jPage)
+                }
+                val root = JSONObject(); root.put("version", 1); root.put("pages", pages)
+                val tmp = File(annFile.parentFile, annFile.name + ".tmp")
+                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
+                if (annFile.exists()) annFile.delete(); tmp.renameTo(annFile)
+            }
         }
     }
 }
+
+// ======================================================
+//  ITEMS Y COMPONENTES
+// ======================================================
 
 @Composable
 private fun PdfPageItem(
     index: Int,
     bitmap: Bitmap?,
-    showLoadingLabel: Boolean
+    showLoadingLabel: Boolean,
+    editMode: Boolean = false,
+    annotations: PageAnnotations = PageAnnotations(index),
+    selectedTool: String = "pen",
+    penColor: Color = Color.Red,
+    strokeWidth: Float = 0.006f,
+    onPathAdded: (DrawingPath) -> Unit = {}
 ) {
+    var currentPath by remember { mutableStateOf<MutableList<Offset>>(mutableListOf()) }
+    var canvasW by remember { mutableStateOf(0f) }
+    var canvasH by remember { mutableStateOf(0f) }
+
+    fun toNorm(o: Offset): Offset = if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else o
+    fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
+
     if (bitmap != null) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Página ${index + 1}",
-            modifier = Modifier.fillMaxWidth()
-        )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                    .then(
+                        if (editMode) {
+                            Modifier.pointerInput(selectedTool, penColor, strokeWidth, canvasW, canvasH) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        currentPath = mutableListOf(toNorm(offset))
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        currentPath = currentPath.toMutableList().apply { add(toNorm(change.position)) }
+                                    },
+                                    onDragEnd = {
+                                        if (currentPath.size > 1) {
+                                            onPathAdded(
+                                                DrawingPath(
+                                                    points = currentPath.toList(),
+                                                    color = penColor,
+                                                    strokeWidth = strokeWidth,
+                                                    isEraser = selectedTool == "eraser"
+                                                )
+                                            )
+                                        }
+                                        currentPath = mutableListOf()
+                                    }
+                                )
+                            }
+                        } else Modifier
+                    )
+            ) {
+                canvasW = size.width
+                canvasH = size.height
+                drawImage(
+                    image = bitmap.asImageBitmap(),
+                    topLeft = Offset.Zero
+                )
+
+                if (editMode) {
+                    // paths guardados
+                    annotations.paths.forEach { drawingPath ->
+                        if (drawingPath.points.size > 1) {
+                            val path = Path().apply {
+                                val first = toPx(drawingPath.points.first())
+                                moveTo(first.x, first.y)
+                                drawingPath.points.drop(1).forEach { point ->
+                                    val p = toPx(point)
+                                    lineTo(p.x, p.y)
+                                }
+                            }
+
+                            drawPath(
+                                path = path,
+                                color = if (drawingPath.isEraser) Color.White else drawingPath.color,
+                                style = Stroke(width = drawingPath.strokeWidth * canvasW)
+                            )
+                        }
+                    }
+
+                    // path actual
+                    if (currentPath.size > 1) {
+                        val path = Path().apply {
+                            val first = toPx(currentPath.first())
+                            moveTo(first.x, first.y)
+                            currentPath.drop(1).forEach { point ->
+                                val p = toPx(point)
+                                lineTo(p.x, p.y)
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = if (selectedTool == "eraser") Color.White else penColor,
+                            style = Stroke(width = strokeWidth * canvasW)
+                        )
+                    }
+                }
+            }
+
+            if (editMode) {
+                Text(
+                    text = "Página ${index + 1}",
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
     } else {
         Box(
             modifier = Modifier
@@ -500,6 +815,10 @@ private fun PdfPageItem(
     }
 }
 
+// ======================================================
+//  PDF HOLDER
+// ======================================================
+
 private class PdfRendererHolder(file: File) {
     private val pfd: ParcelFileDescriptor =
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -511,8 +830,6 @@ private class PdfRendererHolder(file: File) {
     private val cache = object : LruCache<Int, Bitmap>(maxKb) {
         override fun sizeOf(key: Int, value: Bitmap): Int {
             return (value.byteCount / 1024)
-        }
-        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap?, newValue: Bitmap?) {
         }
     }
 
@@ -557,7 +874,7 @@ private class PdfRendererHolder(file: File) {
         }
         val first = attempt()
         if (first != null) return first
-        try { kotlinx.coroutines.delay(80) } catch (_: Exception) {}
+        try { delay(80) } catch (_: Exception) {}
         return attempt()
     }
 
@@ -575,6 +892,10 @@ private class PdfRendererHolder(file: File) {
         } catch (_: Exception) { }
     }
 }
+
+// ======================================================
+//  POPUP AFINADOR
+// ======================================================
 
 @Composable
 fun FrequencySelectorPopup(
@@ -703,4 +1024,188 @@ fun FrequencySelectorPopup(
             }
         }
     }
+}
+
+// ======================================================
+//  BARRA DERECHA (lápiz / borrador)
+// ======================================================
+
+@Composable
+private fun RightToolBar(
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    onSelectTool: (String) -> Unit,
+    onColorClick: () -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.width(80.dp),
+        color = Color(0xFF2F343A)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ToolButton(
+                icon = Icons.Default.Edit,
+                label = "Lápiz",
+                selected = selectedTool == "pen",
+                onClick = { onSelectTool("pen") }
+            )
+
+            ToolButton(
+                icon = Icons.Default.Delete,
+                label = "Borrador",
+                selected = selectedTool == "eraser",
+                onClick = { onSelectTool("eraser") }
+            )
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.2f), modifier = Modifier.width(48.dp))
+            Spacer(Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = penColor,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable { onColorClick() },
+                shadowElevation = 2.dp
+            ) {}
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
+                ToolButton(
+                    icon = Icons.Default.Remove,
+                    label = "Fino",
+                    selected = strokeWidth < 0.005f,
+                    onClick = { onStrokeChange(0.003f) },
+                    compact = true
+                )
+                Spacer(Modifier.height(4.dp))
+                ToolButton(
+                    icon = Icons.Default.HorizontalRule,
+                    label = "Medio",
+                    selected = strokeWidth in 0.005f..0.008f,
+                    onClick = { onStrokeChange(0.006f) },
+                    compact = true
+                )
+                Spacer(Modifier.height(4.dp))
+                ToolButton(
+                    icon = Icons.Default.DragHandle,
+                    label = "Grueso",
+                    selected = strokeWidth > 0.008f,
+                    onClick = { onStrokeChange(0.010f) },
+                    compact = true
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            ToolButton(
+                icon = Icons.Default.Undo,
+                label = "Deshacer",
+                selected = false,
+                onClick = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false
+) {
+    val bg = if (selected) Color(0xFFEFF6FF) else Color.Transparent
+    val tint = if (selected) Color(0xFF1D4ED8) else Color.White
+    val size = if (compact) 40.dp else 56.dp
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        modifier = Modifier
+            .size(size)
+            .clickable { onClick() }
+    ) {
+        Box(
+            Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
+            )
+        }
+    }
+}
+
+// ======================================================
+//  DIALOGO DE COLOR
+// ======================================================
+
+@Composable
+private fun ColorPickerDialog(
+    currentColor: Color,
+    onColorSelected: (Color) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Seleccionar color") },
+        text = {
+            Column {
+                val colors = listOf(
+                    Color.Red, Color.Blue, Color.Green, Color.Yellow,
+                    Color.Black, Color.Magenta, Color.Cyan, Color(0xFFFF6B6B),
+                    Color(0xFF4ECDC4), Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA)
+                )
+
+                colors.chunked(4).forEach { rowColors ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        rowColors.forEach { color ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = color,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .padding(4.dp)
+                                    .clickable {
+                                        onColorSelected(color)
+                                        onDismiss()
+                                    },
+                                shadowElevation = if (color == currentColor) 4.dp else 0.dp,
+                                border = if (color == currentColor) androidx.compose.foundation.BorderStroke(
+                                    2.dp,
+                                    Color.Black
+                                ) else null
+                            ) {}
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        }
+    )
 }
