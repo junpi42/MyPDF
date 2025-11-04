@@ -76,7 +76,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    var editMode by remember { mutableStateOf(false) }
+    // Edición siempre activa
+    val editMode = true
     var selectedTool by remember { mutableStateOf("pen") }
     var penColor by remember { mutableStateOf(Color.Red) }
     var strokeWidth by remember { mutableStateOf(0.006f) }
@@ -255,109 +256,45 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             .collectLatest { isScrolling = it }
     }
 
-    val lastPage = remember(file.path) { getLastPage(context, file).coerceAtLeast(0) }
-    var didScrollToLast by remember(file.path) { mutableStateOf(false) }
+    // Utilidad de borrado por proximidad (distancia punto-segmento en coords normalizadas)
+    fun distancePointToSegment(p: Offset, a: Offset, b: Offset): Float {
+        val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
+        val vx = bx - ax; val vy = by - ay
+        val wx = p.x - ax; val wy = p.y - ay
+        val vv = vx * vx + vy * vy
+        val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
+        val nx = ax + t * vx
+        val ny = ay + t * vy
+        val dx = p.x - nx
+        val dy = p.y - ny
+        return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
 
-    LaunchedEffect(pageCount, lastPage, showInitialOverlay) {
-        if (pageCount > 0 && !didScrollToLast) {
-            val target = lastPage.coerceIn(0, pageCount - 1)
-            if (!showInitialOverlay) {
-                try { listState.scrollToItem(target) } catch (_: Exception) {}
-                didScrollToLast = true
+    fun erasePathsAt(pageIndex: Int, eraserPoints: List<Offset>, threshold: Float) {
+        val page = annotations.getOrPut(pageIndex) { PageAnnotations(pageIndex) }
+        if (page.paths.isEmpty() || eraserPoints.size < 2) return
+        val toRemove = mutableSetOf<Int>()
+        // Para cada path, si cualquier segmento está cerca de cualquier punto del borrador, marcar para borrar
+        page.paths.forEachIndexed { idx, path ->
+            val pts = path.points
+            if (pts.size < 2) return@forEachIndexed
+            var hit = false
+            loop@ for (i in 0 until pts.size - 1) {
+                val a = pts[i]; val b = pts[i + 1]
+                for (e in eraserPoints) {
+                    if (distancePointToSegment(e, a, b) <= threshold) { hit = true; break@loop }
+                }
             }
+            if (hit) toRemove.add(idx)
+        }
+        if (toRemove.isNotEmpty()) {
+            // eliminar de atrás hacia delante para mantener índices
+            toRemove.sortedDescending().forEach { page.paths.removeAt(it) }
+            scheduleSave()
         }
     }
 
-    LaunchedEffect(listState, pageCount) {
-        if (pageCount <= 0) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collectLatest { idx ->
-                saveLastPage(context, file, idx.coerceIn(0, pageCount - 1))
-            }
-    }
-
-    val maxParallel = minOf(3, Runtime.getRuntime().availableProcessors())
-    val semaphore = remember { Semaphore(maxParallel) }
-
-    LaunchedEffect(listState, pageCount, screenWidthPx) {
-        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
-
-        snapshotFlow {
-            val first = listState.firstVisibleItemIndex
-            val visibles = listState.layoutInfo.visibleItemsInfo.map { it.index }.toSet()
-            Pair(first, visibles)
-        }.collectLatest { (firstIndex, visibleSet) ->
-            initialLoading = pageBitmaps.count { it != null } == 0
-
-            val prefetchBefore = 3
-            val prefetchAfter = 8
-            val start = (firstIndex - prefetchBefore).coerceAtLeast(0)
-            val end = (firstIndex + prefetchAfter).coerceAtMost(pageCount - 1)
-
-            val prioritized = buildList {
-                addAll(visibleSet.sorted())
-                var offset = 1
-                while (true) {
-                    val p = firstIndex + offset
-                    val m = firstIndex - offset
-                    var added = false
-                    if (p <= end) { add(p); added = true }
-                    if (m >= start) { add(m); added = true }
-                    if (!added) break
-                    offset++
-                }
-            }.distinct().filter { it in start..end }
-
-            coroutineScope {
-                val quickW = minOf(screenWidthPx, 600)
-                prioritized.forEach { idx ->
-                    if (pageBitmaps.getOrNull(idx) == null) {
-                        launch(Dispatchers.Default) {
-                            val bmpQuick = holder.renderPageQuick(idx, quickW)
-                            if (bmpQuick != null) {
-                                withContext(Dispatchers.Main) {
-                                    if (idx < pageBitmaps.size) {
-                                        val prev = pageBitmaps[idx]
-                                        pageBitmaps[idx] = bmpQuick
-                                        if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            coroutineScope {
-                val hiPriority = buildSet {
-                    addAll(visibleSet)
-                    val next = (visibleSet.maxOrNull() ?: firstIndex) + 1
-                    if (next in 0 until pageCount) add(next)
-                }
-                hiPriority.forEach { idx ->
-                    launch {
-                        semaphore.withPermit {
-                            val bmpHi = withContext(Dispatchers.Default) {
-                                holder.renderPageToWidth(idx, screenWidthPx)
-                            }
-                            if (bmpHi != null) {
-                                withContext(Dispatchers.Main) {
-                                    if (idx < pageBitmaps.size) {
-                                        val current = pageBitmaps[idx]
-                                        val shouldReplace = current == null || (current.width < (screenWidthPx * 0.95f))
-                                        if (shouldReplace) {
-                                            pageBitmaps[idx] = bmpHi
-                                            if (current != null && current != bmpHi && !current.isRecycled) try { current.recycle() } catch (_: Exception) {}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // ...existing code...
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -393,7 +330,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                 index = index,
                                 bitmap = bmp,
                                 showLoadingLabel = !isScrolling,
-                                editMode = editMode,
+                                editMode = true,
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = selectedTool,
                                 penColor = penColor,
@@ -401,6 +338,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                 onPathAdded = { path ->
                                     annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                     scheduleSave()
+                                },
+                                onErase = { eraserPoints ->
+                                    // Usa el ancho actual como radio del borrador; un poco más amplio
+                                    val thr = (strokeWidth * 1.5f).coerceAtLeast(0.003f)
+                                    erasePathsAt(index, eraserPoints, thr)
                                 }
                             )
                         }
@@ -412,7 +354,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Text(
-                        text = if (initialLoading) "Cargando..." else "$pageCount páginas",
+                        text = if (initialLoading) "Cargando..." else "Editando • $pageCount páginas",
                         color = Color.White
                     )
                 },
@@ -431,24 +373,13 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             )
 
-            // FABs
+            // Solo mantenemos el FAB del afinador
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                FloatingActionButton(
-                    onClick = { editMode = !editMode },
-                    containerColor = if (editMode) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
-                ) {
-                    Icon(
-                        imageVector = if (editMode) Icons.Default.Close else Icons.Default.Edit,
-                        contentDescription = if (editMode) "Cerrar editor" else "Abrir editor",
-                        tint = Color.White
-                    )
-                }
-
                 FloatingActionButton(
                     onClick = {
                         if (tunerActive) {
@@ -468,26 +399,24 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 }
             }
 
-            // barra derecha solo si estamos editando
-            if (editMode) {
-                RightToolBar(
-                    selectedTool = selectedTool,
-                    penColor = penColor,
-                    strokeWidth = strokeWidth,
-                    onSelectTool = { selectedTool = it },
-                    onColorClick = { showColorPicker = true },
-                    onStrokeChange = { strokeWidth = it },
-                    onUndo = {
-                        val currentPage = listState.firstVisibleItemIndex
-                        annotations[currentPage]?.paths?.removeLastOrNull()
-                        scheduleSave()
-                    },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .padding(end = 90.dp)
-                )
-            }
+            // Barra de herramientas siempre visible (edición siempre activa)
+            RightToolBar(
+                selectedTool = selectedTool,
+                penColor = penColor,
+                strokeWidth = strokeWidth,
+                onSelectTool = { selectedTool = it },
+                onColorClick = { showColorPicker = true },
+                onStrokeChange = { strokeWidth = it },
+                onUndo = {
+                    val currentPage = listState.firstVisibleItemIndex
+                    annotations[currentPage]?.paths?.removeLastOrNull()
+                    scheduleSave()
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(end = 90.dp)
+            )
 
             // selector de color
             if (showColorPicker) {
@@ -696,7 +625,8 @@ private fun PdfPageItem(
     selectedTool: String = "pen",
     penColor: Color = Color.Red,
     strokeWidth: Float = 0.006f,
-    onPathAdded: (DrawingPath) -> Unit = {}
+    onPathAdded: (DrawingPath) -> Unit = {},
+    onErase: (List<Offset>) -> Unit = {}
 ) {
     var currentPath by remember { mutableStateOf<MutableList<Offset>>(mutableListOf()) }
     var canvasW by remember { mutableStateOf(0f) }
@@ -724,14 +654,18 @@ private fun PdfPageItem(
                                     },
                                     onDragEnd = {
                                         if (currentPath.size > 1) {
-                                            onPathAdded(
-                                                DrawingPath(
-                                                    points = currentPath.toList(),
-                                                    color = penColor,
-                                                    strokeWidth = strokeWidth,
-                                                    isEraser = selectedTool == "eraser"
+                                            if (selectedTool == "eraser") {
+                                                onErase(currentPath.toList())
+                                            } else {
+                                                onPathAdded(
+                                                    DrawingPath(
+                                                        points = currentPath.toList(),
+                                                        color = penColor,
+                                                        strokeWidth = strokeWidth,
+                                                        isEraser = false
+                                                    )
                                                 )
-                                            )
+                                            }
                                         }
                                         currentPath = mutableListOf()
                                     }
@@ -748,7 +682,7 @@ private fun PdfPageItem(
                 )
 
                 if (editMode) {
-                    // paths guardados
+                    // dibuja paths guardados
                     annotations.paths.forEach { drawingPath ->
                         if (drawingPath.points.size > 1) {
                             val path = Path().apply {
@@ -762,14 +696,14 @@ private fun PdfPageItem(
 
                             drawPath(
                                 path = path,
-                                color = if (drawingPath.isEraser) Color.White else drawingPath.color,
+                                color = drawingPath.color,
                                 style = Stroke(width = drawingPath.strokeWidth * canvasW)
                             )
                         }
                     }
 
-                    // path actual
-                    if (currentPath.size > 1) {
+                    // Si estamos dibujando con lápiz, mostrar trazo actual; si es borrador, no pintar blanco
+                    if (currentPath.size > 1 && selectedTool == "pen") {
                         val path = Path().apply {
                             val first = toPx(currentPath.first())
                             moveTo(first.x, first.y)
@@ -780,7 +714,7 @@ private fun PdfPageItem(
                         }
                         drawPath(
                             path = path,
-                            color = if (selectedTool == "eraser") Color.White else penColor,
+                            color = penColor,
                             style = Stroke(width = strokeWidth * canvasW)
                         )
                     }

@@ -65,7 +65,8 @@ private fun AppRoot() {
     if (selectedFile == null) {
         LibraryScreen(onOpen = { selectedFile = it })
     } else {
-        PdfViewerScreen(file = selectedFile!!, onBack = { selectedFile = null })
+        // Abrir siempre la pantalla de edición (que usa visor con edición siempre activa)
+        PdfEditScreen(file = selectedFile!!, onBack = { selectedFile = null })
     }
 }
 
