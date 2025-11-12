@@ -43,6 +43,38 @@ import java.io.File
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asImageBitmap
 
+// >>> PERF IMPORTS <<<
+import android.os.Trace
+import android.util.Log
+import kotlin.system.measureNanoTime
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+// <<< PERF IMPORTS <<<
+
+// --- Helpers que faltaban ---
+private fun formatBytes(b: Long): String {
+    val kb = 1024.0; val mb = kb * 1024; val gb = mb * 1024
+    return when {
+        b >= gb -> String.format("%.1f GB", b / gb)
+        b >= mb -> String.format("%.1f MB", b / mb)
+        b >= kb -> String.format("%.0f KB", b / kb)
+        else -> "$b B"
+    }
+}
+
+private fun formatRelativeDate(ts: Long): String {
+    val now = System.currentTimeMillis()
+    val d = (now - ts) / (1000 * 60 * 60 * 24)
+    return when {
+        d <= 0 -> "Today"
+        d == 1L -> "Yesterday"
+        d < 7  -> "$d days ago"
+        else   -> java.text.SimpleDateFormat("dd MMM", java.util.Locale.getDefault())
+            .format(java.util.Date(ts))
+    }
+}
+
+
 private enum class SortOption { BY_NAME, BY_DATE, BY_SIZE }
 
 class MainActivity : ComponentActivity() {
@@ -75,6 +107,7 @@ private fun AppRoot() {
 fun LibraryScreen(onOpen: (File) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
     var categories by remember { mutableStateOf(listOf<File>()) }
     var selectedCategory by rememberSaveable { mutableStateOf<File?>(null) }
     var folders by remember { mutableStateOf(listOf<File>()) }
@@ -86,31 +119,45 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
     var searching by remember { mutableStateOf(false) }
     var sortOption by rememberSaveable { mutableStateOf(SortOption.BY_DATE) }
     var sortAsc by rememberSaveable { mutableStateOf(false) }
+
+    // ------- Timings integrados -------
     suspend fun refreshCategories() {
         loading = true
-        val (rootDirs, _) = withContext(Dispatchers.IO) { listLibraryFolder(context, "") }
-        categories = rootDirs.sortedBy { it.name.lowercase() }
+        val pair = Perf.timeIO("listLibrary:root") { listLibraryFolder(context, "") }
+        val (rootDirs, _) = pair
+        categories = Perf.time("sort:cats") { rootDirs.sortedBy { it.name.lowercase() } }
         if (selectedCategory?.exists() != true) selectedCategory = categories.firstOrNull()
         loading = false
     }
+
     suspend fun loadCategory(cat: File?) {
         loading = true
         if (cat == null) { folders = emptyList(); pdfs = emptyList(); loading = false; return }
         val base = appPdfDir(context)
         val relPath = runCatching { cat.relativeTo(base).path.replace(File.separatorChar, '/') }
             .getOrElse { cat.name }
-        val (fList, pList) = withContext(Dispatchers.IO) { listLibraryFolder(context, relPath) }
-        folders = fList.sortedBy { it.name.lowercase() }
+
+        val (fList, pList) = Perf.timeIO("listLibrary:$relPath") { listLibraryFolder(context, relPath) }
+        folders = Perf.time("sort:folders") { fList.sortedBy { it.name.lowercase() } }
         pdfs = pList
-        withContext(Dispatchers.IO) {
-            pList.forEach { f -> if (!thumbs.containsKey(f)) thumbs[f] = generatePdfThumbnail(f) }
+
+        Perf.timeIO("thumbs:batch:$relPath") {
+            pList.forEach { f ->
+                if (!thumbs.containsKey(f)) {
+                    thumbs[f] = Perf.timeIO("thumb:gen:${f.name}") { generatePdfThumbnailCached(context, f) }
+                }
+            }
         }
         loading = false
+        // Dump opcional de resumen tras cargar categoría
+        Perf.dumpSummary()
     }
+
     suspend fun searchEverywhere(text: String) {
         if (text.isBlank()) { globalResults = emptyList(); return }
         searching = true
-        val results = withContext(Dispatchers.IO) {
+
+        val results = Perf.timeIO("search:walk") {
             fun walk(dir: File, acc: MutableList<File>) {
                 dir.listFiles()?.forEach { f ->
                     if (f.isDirectory) walk(f, acc)
@@ -123,49 +170,42 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
             rootDirs.forEach { walk(it, all) }
             all.filter { it.name.contains(text, ignoreCase = true) }
         }
-        withContext(Dispatchers.IO) { results.forEach { if (!thumbs.containsKey(it)) thumbs[it] = generatePdfThumbnail(it) } }
-        globalResults = results
+
+        Perf.timeIO("thumbs:searchBatch") {
+            results.forEach {
+                if (!thumbs.containsKey(it)) {
+                    thumbs[it] = generatePdfThumbnailCached(context, it)
+                }
+            }
+        }
+        globalResults = Perf.time("search:assign") { results }
         searching = false
     }
+
     fun applySort(list: List<File>): List<File> {
         val comp = when (sortOption) {
             SortOption.BY_NAME -> compareBy<File> { it.name.lowercase() }
             SortOption.BY_DATE -> compareBy<File> { it.lastModified() }
             SortOption.BY_SIZE -> compareBy<File> { it.length() }
         }
-        val base = list.sortedWith(comp)
-        return if (sortAsc) base else base.reversed()
+        val base = Perf.time("sort:files:$sortOption") { list.sortedWith(comp) }
+        return if (sortAsc) base else base.asReversed()
     }
-    fun countFilesRecursive(dir: File): Int {
+
+    fun countFilesRecursive(dir: File): Int = Perf.time("count:${dir.name}") {
         var count = 0
         dir.listFiles()?.forEach {
             if (it.isDirectory) count += countFilesRecursive(it)
             else if (it.extension.equals("pdf", true)) count++
         }
-        return count
+        count
     }
-    fun formatBytes(b: Long): String {
-        val kb = 1024.0; val mb = kb * 1024; val gb = mb * 1024
-        return when {
-            b >= gb -> String.format("%.1f GB", b / gb)
-            b >= mb -> String.format("%.1f MB", b / mb)
-            b >= kb -> String.format("%.0f KB", b / kb)
-            else -> "$b B"
-        }
-    }
-    fun formatRelativeDate(ts: Long): String {
-        val now = System.currentTimeMillis()
-        val d = (now - ts) / (1000 * 60 * 60 * 24)
-        return when {
-            d <= 0 -> "Today"
-            d == 1L -> "Yesterday"
-            d < 7  -> "$d days ago"
-            else   -> java.text.SimpleDateFormat("dd MMM", java.util.Locale.getDefault()).format(java.util.Date(ts))
-        }
-    }
+    // ------- Fin timings integrados -------
+
     LaunchedEffect(Unit) { refreshCategories() }
     LaunchedEffect(selectedCategory) { loadCategory(selectedCategory) }
     LaunchedEffect(query) { searchEverywhere(query) }
+
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri ->
@@ -177,14 +217,19 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                 val relPath = selectedCategory?.let { sel ->
                     runCatching { sel.relativeTo(base).path.replace(File.separatorChar, '/') }.getOrElse { sel.name }
                 } ?: ""
-                val newFile = withContext(Dispatchers.IO) { clonePdfIntoApp(context, uri, relPath) }
-                withContext(Dispatchers.IO) { thumbs[newFile] = generatePdfThumbnail(newFile) }
+                val newFile = Perf.timeIO("import:clone:$relPath") { clonePdfIntoApp(context, uri, relPath) }
+                withContext(Dispatchers.IO) {
+                    thumbs[newFile] = Perf.timeIO("thumb:gen:${newFile.name}") { generatePdfThumbnailCached(context, newFile) }
+                }
                 loadCategory(selectedCategory)
                 Toast.makeText(context, "PDF importado ✓", Toast.LENGTH_SHORT).show()
                 loading = false
+                // Resumen tras importar
+                Perf.dumpSummary()
             }
         }
     )
+
     Row(Modifier.fillMaxSize()) {
         Surface(
             tonalElevation = 1.dp,
@@ -441,3 +486,88 @@ private fun PdfCard(
         }
     }
 }
+
+// =======================
+// PERF helper (API 23 safe)
+// =======================
+private object Perf {
+    private const val TAG = "PDFPERF"
+
+    private val count = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    private val totalNs = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+    private fun incCount(label: String) {
+        synchronized(count) {
+            val curr = count[label]
+            if (curr == null) {
+                val created = java.util.concurrent.atomic.AtomicLong(0)
+                val prev = count.putIfAbsent(label, created)
+                (prev ?: created).incrementAndGet()
+            } else {
+                curr.incrementAndGet()
+            }
+        }
+    }
+
+    private fun addTotal(label: String, deltaNs: Long) {
+        synchronized(totalNs) {
+            val curr = totalNs[label]
+            if (curr == null) {
+                val created = java.util.concurrent.atomic.AtomicLong(0)
+                val prev = totalNs.putIfAbsent(label, created)
+                (prev ?: created).addAndGet(deltaNs)
+            } else {
+                curr.addAndGet(deltaNs)
+            }
+        }
+    }
+
+    fun begin(label: String) {
+        android.os.Trace.beginSection(label)
+    }
+
+    fun end(label: String, elapsedNs: Long? = null) {
+        android.os.Trace.endSection()
+        if (elapsedNs != null) {
+            incCount(label)
+            addTotal(label, elapsedNs)
+            android.util.Log.d(TAG, "$label took ${elapsedNs / 1_000_000} ms")
+        }
+    }
+
+    inline fun <T> time(label: String, block: () -> T): T {
+        begin(label)
+        val start = System.nanoTime()
+        val result = block()
+        val ns = System.nanoTime() - start
+        end(label, ns)
+        return result
+    }
+
+    suspend inline fun <T> timeIO(label: String, crossinline block: suspend () -> T): T {
+        begin(label)
+        val start = System.nanoTime()
+        val res = withContext(kotlinx.coroutines.Dispatchers.IO) { block() }
+        val ns = System.nanoTime() - start
+        end(label, ns)
+        return res
+    }
+
+    fun dumpSummary() {
+        android.util.Log.d(TAG, "===== PERF SUMMARY =====")
+        for ((k, total) in totalNs) {
+            val c = count[k]?.get() ?: 0L
+            val avgMs = if (c > 0) (total.get() / c) / 1_000_000.0 else 0.0
+            android.util.Log.d(
+                TAG,
+                String.format(
+                    "%s -> count=%d, total=%.1f ms, avg=%.1f ms",
+                    k, c, total.get() / 1_000_000.0, avgMs
+                )
+            )
+        }
+        android.util.Log.d(TAG, "========================")
+    }
+}
+
+

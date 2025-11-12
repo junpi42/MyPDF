@@ -6,8 +6,11 @@ import android.provider.OpenableColumns
 import java.io.File
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
 fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitmap? {
     return try {
@@ -25,6 +28,35 @@ fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitma
         e.printStackTrace()
         null
     }
+}
+
+fun generatePdfThumbnailCached(context: Context, file: File, width: Int = 200, height: Int = 250): Bitmap? {
+    return try {
+        val cacheDir = File(context.cacheDir, "thumbs").apply { if (!exists()) mkdirs() }
+        val key = "${file.absolutePath}:${file.length()}:${file.lastModified()}:${width}x${height}"
+        val name = sha1(key) + ".png"
+        val target = File(cacheDir, name)
+        if (target.exists() && target.length() > 0L) {
+            BitmapFactory.decodeFile(target.absolutePath)
+        } else {
+            val bmp = generatePdfThumbnail(file, width, height)
+            if (bmp != null) {
+                runCatching {
+                    FileOutputStream(target).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 90, out) }
+                }
+            }
+            bmp
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+private fun sha1(s: String): String {
+    val md = MessageDigest.getInstance("SHA-1")
+    val b = md.digest(s.toByteArray())
+    return b.joinToString("") { String.format("%02x", it) }
 }
 
 fun appPdfDir(context: Context): File {

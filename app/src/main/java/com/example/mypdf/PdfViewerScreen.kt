@@ -1,29 +1,25 @@
 package com.example.mypdf
 
-import android.Manifest
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.util.Log
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,10 +33,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
+import androidx.compose.ui.unit.IntSize
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -56,6 +50,9 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
+
+private const val TAG = "PDF_TIMING"
 
 data class DrawingPath(
     val points: List<Offset>, // puntos normalizados [0..1]
@@ -72,21 +69,23 @@ data class PageAnnotations(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfViewerScreen(file: File, onBack: () -> Unit) {
+    val startTime = remember { System.nanoTime() }
+    Log.i(TAG, "========================================")
+    Log.i(TAG, "⏱️ PdfViewerScreen STARTED for: ${file.name}")
+    Log.i(TAG, "========================================")
+
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    // Edición siempre activa
-    val editMode = true
     var selectedTool by remember { mutableStateOf("pen") }
     var penColor by remember { mutableStateOf(Color.Red) }
     var strokeWidth by remember { mutableStateOf(0.006f) }
     var showColorPicker by remember { mutableStateOf(false) }
 
-    // ===== anotaciones en memoria =====
     val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
 
-    // ===== archivo de anotaciones + guardado diferido (MOVED ARRIBA) =====
+    // ===== archivo de anotaciones + guardado diferido =====
     val annFile = remember(file.path) { File(file.parentFile, file.nameWithoutExtension + ".ann.json") }
     var saveJob by remember { mutableStateOf<Job?>(null) }
     val scheduleSave: () -> Unit = {
@@ -103,12 +102,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         val jP = JSONObject()
                         jP.put("e", p.isEraser)
                         jP.put("c", p.color.toArgb())
-                        jP.put("w", p.strokeWidth) // normalizado
+                        jP.put("w", p.strokeWidth)
                         val pts = JSONArray()
                         p.points.forEach { o ->
                             val pair = JSONArray()
-                            pair.put(o.x)
-                            pair.put(o.y)
+                            pair.put(o.x); pair.put(o.y)
                             pts.put(pair)
                         }
                         jP.put("pts", pts)
@@ -117,9 +115,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     jPage.put("paths", jPaths)
                     pages.put(jPage)
                 }
-                val root = JSONObject()
-                root.put("version", 1)
-                root.put("pages", pages)
+                val root = JSONObject().apply {
+                    put("version", 1); put("pages", pages)
+                }
                 val tmp = File(annFile.parentFile, annFile.name + ".tmp")
                 FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
                 if (annFile.exists()) annFile.delete()
@@ -128,20 +126,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // ===== afinador =====
-    var tunerActive by remember { mutableStateOf(false) }
-    val tuner = remember { AudioTuner() }
-    val tuningResult by tuner.tuningState.collectAsState()
-    var showFrequencySelector by remember { mutableStateOf(false) }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            tunerActive = true
-            tuner.startTuning(scope)
-        }
-    }
 
     // pantalla completa
     DisposableEffect(Unit) {
@@ -157,17 +141,21 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     }
 
     // Holder con caché LRU y utilidades de render
+    val holderStart = System.nanoTime()
     val holder = remember(file.path) { PdfRendererHolder(file) }
+    Log.i(TAG, "✅ Holder initialized in ${(System.nanoTime() - holderStart) / 1_000_000} ms")
 
     var pageCount by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { pageCount = holder.pageCount }
+    val pageCountStart = System.nanoTime()
+    LaunchedEffect(Unit) {
+        pageCount = holder.pageCount
+        Log.i(TAG, "📄 Page count obtained: $pageCount pages in ${(System.nanoTime() - pageCountStart) / 1_000_000} ms")
+    }
 
     val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
 
     var initialLoading by remember { mutableStateOf(true) }
-
     val readyThreshold by remember(pageCount) { mutableStateOf(kotlin.math.min(3, kotlin.math.max(pageCount, 0))) }
-
     var showInitialOverlay by remember { mutableStateOf(true) }
 
     LaunchedEffect(pageCount) {
@@ -195,11 +183,14 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
+    // ===== Render: precarga de primeras páginas (quick + hi primera) =====
+    // Reducimos paralelismo para evitar tormentas y GC
+    val preloadStart = System.nanoTime()
     LaunchedEffect(pageCount, screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0) {
             val quickW = kotlin.math.min(screenWidthPx, 600)
             val bootCount = kotlin.math.min(readyThreshold + 1, pageCount)
-            val semaphore = Semaphore(kotlin.math.min(2, Runtime.getRuntime().availableProcessors()))
+            val semaphore = Semaphore(1) // antes 2; mejor 1 para evitar colisiones al abrir
             coroutineScope {
                 repeat(bootCount) { idx ->
                     if (pageBitmaps.getOrNull(idx) == null) {
@@ -230,13 +221,17 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     if (prev != null && prev != hi && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
                 }
             }
+            Log.i(TAG, "🚀 Initial preload completed in ${(System.nanoTime() - preloadStart) / 1_000_000} ms")
         }
     }
 
     LaunchedEffect(pageBitmaps, readyThreshold) {
         snapshotFlow { pageBitmaps.count { it != null } }
             .collectLatest { loaded ->
-                if (loaded >= readyThreshold) showInitialOverlay = false
+                if (loaded >= readyThreshold) {
+                    showInitialOverlay = false
+                    Log.i(TAG, "✨ Initial overlay hidden - VIEWER READY in ${(System.nanoTime() - startTime) / 1_000_000} ms total")
+                }
             }
     }
 
@@ -254,6 +249,80 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
             .collectLatest { isScrolling = it }
+    }
+
+    // Render on-demand según páginas visibles, con ventana de prefetch y deduplicación
+    val inFlightJobs = remember { mutableStateMapOf<String, Job>() }
+    LaunchedEffect(listState, pageCount, screenWidthPx) {
+        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collectLatest { visibles ->
+                if (visibles.isEmpty()) return@collectLatest
+                val window = 2
+                val targetsQuick = buildSet {
+                    visibles.forEach { v ->
+                        for (i in (v - window)..(v + window)) if (i in 0 until pageCount) add(i)
+                    }
+                }
+                val targetsHi = visibles.toSet()
+                val quickW = kotlin.math.min(screenWidthPx, 600)
+                val sem = Semaphore(2) // antes 3; 2 evita saturar CPU/GC
+
+                // 1) Cancelar jobs que ya no son necesarios
+                val stillNeeded = (targetsQuick + targetsHi)
+                inFlightJobs.keys
+                    .toList()
+                    .forEach { key ->
+                        val idx = key.substringAfter(':').toIntOrNull()
+                        if (idx == null || idx !in stillNeeded) {
+                            inFlightJobs.remove(key)?.cancel()
+                        }
+                    }
+
+                // 2) Lanzar quick para ventana alrededor
+                targetsQuick.forEach { idx ->
+                    if (pageBitmaps.getOrNull(idx) == null) {
+                        val key = "q:$idx"
+                        // si hay un hi en curso para el mismo idx, no lanzamos quick
+                        if (inFlightJobs["h:$idx"]?.isActive == true) return@forEach
+                        // evita duplicados: cancela previo si existía
+                        inFlightJobs[key]?.cancel()
+                        inFlightJobs[key] = launch {
+                            val renderStart = System.nanoTime()
+                            sem.withPermit {
+                                val bmp = withContext(Dispatchers.Default) { holder.renderPageQuick(idx, quickW) }
+                                if (bmp != null && idx < pageBitmaps.size && pageBitmaps[idx] == null) {
+                                    pageBitmaps[idx] = bmp
+                                    Log.i(TAG, "⚡ Quick render page $idx in ${(System.nanoTime() - renderStart) / 1_000_000} ms")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3) Alta resolución para los visibles (si no se desplaza, prioridad)
+                if (!isScrolling) {
+                    targetsHi.forEach { idx ->
+                        val keyHi = "h:$idx"
+                        if (inFlightJobs[keyHi]?.isActive == true) return@forEach
+                        // si había un quick en curso para el mismo idx, cancelarlo
+                        inFlightJobs["q:$idx"]?.cancel()
+                        inFlightJobs[keyHi] = launch {
+                            val renderStart = System.nanoTime()
+                            val bmp = withContext(Dispatchers.Default) { holder.renderPageToWidth(idx, screenWidthPx) }
+                            if (bmp != null && idx < pageBitmaps.size) {
+                                val prev = pageBitmaps[idx]
+                                if (prev == null || prev.width < bmp.width * 0.9f) {
+                                    pageBitmaps[idx] = bmp
+                                    if (prev != null && prev != bmp && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
+                                    Log.i(TAG, "🎯 High res render page $idx in ${(System.nanoTime() - renderStart) / 1_000_000} ms")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
     }
 
     // Utilidad de borrado por proximidad (distancia punto-segmento en coords normalizadas)
@@ -274,7 +343,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         val page = annotations.getOrPut(pageIndex) { PageAnnotations(pageIndex) }
         if (page.paths.isEmpty() || eraserPoints.size < 2) return
         val toRemove = mutableSetOf<Int>()
-        // Para cada path, si cualquier segmento está cerca de cualquier punto del borrador, marcar para borrar
         page.paths.forEachIndexed { idx, path ->
             val pts = path.points
             if (pts.size < 2) return@forEachIndexed
@@ -288,13 +356,10 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             if (hit) toRemove.add(idx)
         }
         if (toRemove.isNotEmpty()) {
-            // eliminar de atrás hacia delante para mantener índices
             toRemove.sortedDescending().forEach { page.paths.removeAt(it) }
             scheduleSave()
         }
     }
-
-    // ...existing code...
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -340,7 +405,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                     scheduleSave()
                                 },
                                 onErase = { eraserPoints ->
-                                    // Usa el ancho actual como radio del borrador; un poco más amplio
                                     val thr = (strokeWidth * 1.5f).coerceAtLeast(0.003f)
                                     erasePathsAt(index, eraserPoints, thr)
                                 }
@@ -373,33 +437,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             )
 
-            // Solo mantenemos el FAB del afinador
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                FloatingActionButton(
-                    onClick = {
-                        if (tunerActive) {
-                            tunerActive = false
-                            tuner.stopTuning()
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    containerColor = if (tunerActive) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = if (tunerActive) "Desactivar afinador" else "Activar afinador",
-                        tint = Color.White
-                    )
-                }
-            }
 
-            // Barra de herramientas siempre visible (edición siempre activa)
+            // Barra de herramientas siempre visible
             RightToolBar(
                 selectedTool = selectedTool,
                 penColor = penColor,
@@ -426,104 +465,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     onDismiss = { showColorPicker = false }
                 )
             }
-
-            // afinador
-            if (tunerActive) {
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xE6000000)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(16.dp)
-                            .fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(60.dp)
-                                .background(
-                                    color = when {
-                                        tuningResult == null -> Color.Gray
-                                        tuningResult?.errorMessage != null -> Color(0xFFFF6B6B)
-                                        tuningResult?.isInTune == true -> Color(0xFF4CAF50)
-                                        else -> Color(0xFFFF6B6B)
-                                    },
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onLongPress = {
-                                            showFrequencySelector = true
-                                        }
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = when {
-                                    tuningResult?.errorMessage != null -> tuningResult?.errorMessage ?: ""
-                                    tuningResult?.isInTune == true -> "✓ AFINADO"
-                                    tuningResult != null -> "DESAFINADO"
-                                    else -> "Escuchando..."
-                                },
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        tuningResult?.let { result ->
-                            if (result.errorMessage == null) {
-                                Text(
-                                    text = "Nota: ${result.targetNote}",
-                                    color = Color.White,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                Text(
-                                    text = String.format("%.1f Hz", result.detectedFrequency),
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 16.sp
-                                )
-
-                                val centsText = if (result.centsOff > 0) {
-                                    String.format("+%.0f cents (alto)", result.centsOff)
-                                } else {
-                                    String.format("%.0f cents (bajo)", result.centsOff)
-                                }
-
-                                Text(
-                                    text = centsText,
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (showFrequencySelector) {
-                    FrequencySelectorPopup(
-                        tuner = tuner,
-                        onDismiss = { showFrequencySelector = false }
-                    )
-                }
-            }
         }
     }
 
     // ===== cargar anotaciones guardadas =====
+    val annotationsStart = System.nanoTime()
     LaunchedEffect(annFile.path) {
         withContext(Dispatchers.IO) {
             if (annFile.exists()) {
@@ -568,19 +514,46 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 } catch (_: Exception) {}
             }
         }
+        Log.i(TAG, "📝 Annotations loaded in ${(System.nanoTime() - annotationsStart) / 1_000_000} ms")
     }
 
-    // ===== onDispose: guardar y limpiar =====
+    // ===== onDispose: cancelar renders, guardar y limpiar =====
     DisposableEffect(holder) {
         onDispose {
-            try { saveLastPage(context, file, listState.firstVisibleItemIndex) } catch (_: Exception) {}
-            tuner.stopTuning()
+            // Guardar última página vista
+            try {
+                val prefs = context.getSharedPreferences("reader_state", android.content.Context.MODE_PRIVATE)
+                prefs.edit().putInt("last_page::${file.absolutePath}", listState.firstVisibleItemIndex.coerceAtLeast(0)).apply()
+            } catch (_: Exception) {}
+
+            // 1) Cancelar trabajos en vuelo
+            try {
+                // Cancela y limpia el map de jobs
+                // (El remember { mutableStateMapOf } está en este scope)
+            } catch (_: Exception) {}
+
+            // Cancela concretamente los renders activos
+            // Nota: el map 'inFlightJobs' está en el remember anterior
+            try {
+                inFlightJobs.values.forEach { it.cancel() }
+                inFlightJobs.clear()
+            } catch (_: Exception) {}
+
+            // 2) Cerrar holder (después de cancelar)
             holder.close()
-            pageBitmaps.forEach { bmp ->
-                try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
+
+            // 3) Liberar bitmaps (ligera espera para no pelear con Compose)
+            runCatching {
+                scope.launch(Dispatchers.Default) {
+                    delay(32)
+                    pageBitmaps.forEach { bmp ->
+                        try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
+                    }
+                    pageBitmaps.clear()
+                }
             }
-            pageBitmaps.clear()
-            // guardado final bloqueante
+
+            // 4) Guardado final bloqueante
             runCatching {
                 val pages = JSONArray()
                 annotations.toSortedMap().forEach { (idx, page) ->
@@ -607,6 +580,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
                 if (annFile.exists()) annFile.delete(); tmp.renameTo(annFile)
             }
+            Log.i(TAG, "========================================")
+            Log.i(TAG, "🏁 PdfViewerScreen CLOSED after ${(System.nanoTime() - startTime) / 1_000_000} ms total")
+            Log.i(TAG, "========================================")
         }
     }
 }
@@ -678,11 +654,10 @@ private fun PdfPageItem(
                 canvasH = size.height
                 drawImage(
                     image = bitmap.asImageBitmap(),
-                    topLeft = Offset.Zero
+                    dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
                 )
 
                 if (editMode) {
-                    // dibuja paths guardados
                     annotations.paths.forEach { drawingPath ->
                         if (drawingPath.points.size > 1) {
                             val path = Path().apply {
@@ -693,7 +668,6 @@ private fun PdfPageItem(
                                     lineTo(p.x, p.y)
                                 }
                             }
-
                             drawPath(
                                 path = path,
                                 color = drawingPath.color,
@@ -702,7 +676,6 @@ private fun PdfPageItem(
                         }
                     }
 
-                    // Si estamos dibujando con lápiz, mostrar trazo actual; si es borrador, no pintar blanco
                     if (currentPath.size > 1 && selectedTool == "pen") {
                         val path = Path().apply {
                             val first = toPx(currentPath.first())
@@ -758,22 +731,22 @@ private class PdfRendererHolder(file: File) {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer: PdfRenderer = PdfRenderer(pfd)
 
+    @Volatile private var closed = false
     private val renderMutex = Mutex()
 
     private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
     private val cache = object : LruCache<Int, Bitmap>(maxKb) {
-        override fun sizeOf(key: Int, value: Bitmap): Int {
-            return (value.byteCount / 1024)
-        }
+        override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount / 1024
     }
 
     val pageCount: Int get() = renderer.pageCount
 
+    // >>> Usa ARGB_8888 por defecto (más compatible)
     suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
         cache.get(index)?.let { existing ->
             if (existing.width >= quickTargetW * 0.95f) return existing
         }
-        return renderInternal(index, quickTargetW, Bitmap.Config.RGB_565)
+        return renderInternal(index, quickTargetW, Bitmap.Config.ARGB_8888)
     }
 
     suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
@@ -784,181 +757,59 @@ private class PdfRendererHolder(file: File) {
     }
 
     private suspend fun renderInternal(index: Int, targetW: Int, config: Bitmap.Config): Bitmap? {
-        suspend fun attempt(): Bitmap? {
+        suspend fun attempt(conf: Bitmap.Config): Bitmap? {
+            if (closed) return null
             var page: PdfRenderer.Page? = null
             return try {
                 renderMutex.withLock {
+                    if (closed) return null
+                    if (index !in 0 until renderer.pageCount) return null
+
                     page = renderer.openPage(index)
                     val srcW = page!!.width
                     val srcH = page!!.height
-                    val scale = (targetW.toFloat() / srcW).coerceAtLeast(0.1f)
+                    val scale = (targetW.toFloat() / srcW).coerceIn(0.1f, 8f)
                     val outW = (srcW * scale).toInt().coerceAtLeast(1)
                     val outH = (srcH * scale).toInt().coerceAtLeast(1)
-                    val bitmap = Bitmap.createBitmap(outW, outH, config)
+
+                    val bitmap = Bitmap.createBitmap(outW, outH, conf)
                     page!!.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     cache.put(index, bitmap)
                     bitmap
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (e: IllegalArgumentException) {
+                // Esto es lo que ves en el log: Unsupported pixel format
+                android.util.Log.w("PDFPERF", "render failed idx=$index w=$targetW (closed=$closed) with $conf: ${e.message}")
+                null
+            } catch (e: Throwable) {
+                android.util.Log.w("PDFPERF", "render failed idx=$index w=$targetW (closed=$closed): ${e.javaClass.simpleName}: ${e.message}")
                 null
             } finally {
                 try { page?.close() } catch (_: Exception) {}
             }
         }
-        val first = attempt()
-        if (first != null) return first
-        try { delay(80) } catch (_: Exception) {}
-        return attempt()
+
+        // 1º intento con el config pedido
+        var bmp = attempt(config)
+        // Fallback automático a ARGB_8888 si falló (por soporte de PdfRenderer)
+        if (bmp == null && config != Bitmap.Config.ARGB_8888) {
+            bmp = attempt(Bitmap.Config.ARGB_8888)
+        }
+        return bmp
     }
 
-    fun clearCache() {
-        try {
-            cache.evictAll()
-        } catch (_: Exception) {}
-    }
+    fun clearCache() = runCatching { cache.evictAll() }.onFailure { }.let {}
 
     fun close() {
-        try {
-            renderer.close()
-            pfd.close()
-            cache.evictAll()
-        } catch (_: Exception) { }
+        if (closed) return
+        closed = true
+        runCatching { renderer.close() }
+        runCatching { pfd.close() }
+        runCatching { cache.evictAll() }
     }
 }
 
-// ======================================================
-//  POPUP AFINADOR
-// ======================================================
 
-@Composable
-fun FrequencySelectorPopup(
-    tuner: AudioTuner,
-    onDismiss: () -> Unit
-) {
-    val currentFreq by tuner.baseFrequency.collectAsState()
-    val isNoisy by tuner.noisyEnvironment.collectAsState()
-
-    Popup(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier
-                .padding(16.dp)
-                .widthIn(min = 280.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.White
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Ajustes del afinador",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color.Black
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Frecuencia base",
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    color = Color.Black
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Button(
-                        onClick = { tuner.decrementBaseFrequency(1.0) },
-                        modifier = Modifier.size(50.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text("-", fontSize = 30.sp)
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Text(
-                        text = "${currentFreq.toInt()} Hz",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black,
-                        modifier = Modifier.width(80.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Button(
-                        onClick = { tuner.incrementBaseFrequency(1.0) },
-                        modifier = Modifier.size(50.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text("+", fontSize = 30.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = Color.LightGray)
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Tipo de ambiente",
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    color = Color.Black
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { tuner.setNoisyEnvironment(false) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (!isNoisy) Color(0xFF4CAF50) else Color.Gray
-                        )
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(" Entorno Silencioso", fontSize = 20.sp)
-                        }
-                    }
-
-                    Button(
-                        onClick = { tuner.setNoisyEnvironment(true) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isNoisy) Color(0xFFFF6B6B) else Color.Gray
-                        )
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-
-                            Text("Entorno Ruidoso", fontSize = 20.sp)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Cerrar")
-                }
-            }
-        }
-    }
-}
 
 // ======================================================
 //  BARRA DERECHA (lápiz / borrador)
@@ -1045,7 +896,7 @@ private fun RightToolBar(
             Spacer(Modifier.weight(1f))
 
             ToolButton(
-                icon = Icons.Default.Undo,
+                icon = Icons.AutoMirrored.Filled.Undo,
                 label = "Deshacer",
                 selected = false,
                 onClick = onUndo
