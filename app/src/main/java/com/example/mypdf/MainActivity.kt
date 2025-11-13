@@ -15,11 +15,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,22 +40,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 
-// >>> PERF IMPORTS <<<
-import android.os.Trace
-import android.util.Log
-import kotlin.system.measureNanoTime
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
+// PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
 // <<< PERF IMPORTS <<<
 
 // --- Helpers que faltaban ---
 private fun formatBytes(b: Long): String {
     val kb = 1024.0; val mb = kb * 1024; val gb = mb * 1024
     return when {
-        b >= gb -> String.format("%.1f GB", b / gb)
-        b >= mb -> String.format("%.1f MB", b / mb)
-        b >= kb -> String.format("%.0f KB", b / kb)
+        b >= gb -> String.format(java.util.Locale.getDefault(), "%.1f GB", b / gb)
+        b >= mb -> String.format(java.util.Locale.getDefault(), "%.1f MB", b / mb)
+        b >= kb -> String.format(java.util.Locale.getDefault(), "%.0f KB", b / kb)
         else -> "$b B"
     }
 }
@@ -119,6 +114,13 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
     var searching by remember { mutableStateOf(false) }
     var sortOption by rememberSaveable { mutableStateOf(SortOption.BY_DATE) }
     var sortAsc by rememberSaveable { mutableStateOf(false) }
+
+    // Estado para crear nueva categoría (diálogo)
+    var showCategoryDialog by remember { mutableStateOf(false) }
+    var categoryName by remember { mutableStateOf("") }
+    // Estados para panel derecho (gestión de carpetas)
+    var newFolderName by remember { mutableStateOf("") }
+    var folderToDelete by remember { mutableStateOf<File?>(null) }
 
     // ------- Timings integrados -------
     suspend fun refreshCategories() {
@@ -230,20 +232,25 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
         }
     )
 
+    // Reemplazamos BoxWithConstraints por LocalConfiguration para detectar ancho
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 800
+    val sidebarWidth = if (!isCompact) 260.dp else 72.dp
+
+    // Layout principal: barra izquierda siempre visible, centro amplio, panel derecho opcional
     Row(Modifier.fillMaxSize()) {
+        // Barra izquierda (siempre visible): compacta en móviles
         Surface(
             tonalElevation = 1.dp,
-            modifier = Modifier.width(260.dp).fillMaxHeight()
+            modifier = Modifier.width(sidebarWidth).fillMaxHeight()
         ) {
             Column(Modifier.fillMaxSize()) {
                 Text(
                     "Categories",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
                 )
-                LazyColumn(
-                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-                ) {
+                LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                     items(categories) { cat ->
                         val selected = cat == selectedCategory
                         CategoryItem(
@@ -252,74 +259,24 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                             selected = selected,
                             onClick = { selectedCategory = cat }
                         )
-                        Spacer(Modifier.height(6.dp))
                     }
                 }
-                var showCategoryDialog by remember { mutableStateOf(false) }
-                var categoryName by remember { mutableStateOf("") }
-                Surface(
-                    onClick = { showCategoryDialog = true },
-                    shape = MaterialTheme.shapes.large,
-                    tonalElevation = 2.dp,
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxWidth()
-                        .height(44.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("+")
-                        Spacer(Modifier.width(10.dp))
-                        Text("New Category")
-                    }
-                }
-                if (showCategoryDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showCategoryDialog = false },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                if (categoryName.isNotBlank()) {
-                                    scope.launch {
-                                        val created = createLibraryFolder(context, "", categoryName)
-                                        if (created != null) {
-                                            refreshCategories()
-                                            selectedCategory = created
-                                            categoryName = ""
-                                            showCategoryDialog = false
-                                        } else {
-                                            Toast.makeText(context, "No se pudo crear", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            }) { Text("Create") }
-                        },
-                        dismissButton = { TextButton(onClick = { showCategoryDialog = false }) { Text("Cancel") } },
-                        title = { Text("New Category") },
-                        text = {
-                            OutlinedTextField(
-                                value = categoryName,
-                                onValueChange = { categoryName = it },
-                                label = { Text("Name") },
-                                singleLine = true
-                            )
-                        }
-                    )
+                Box(Modifier.fillMaxWidth()) {
+                    FloatingActionButton(onClick = { showCategoryDialog = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text("➕") }
                 }
             }
         }
+
         VerticalDivider()
+
+        // Contenido central
         Column(Modifier.weight(1f).fillMaxHeight()) {
             Text(
                 "PDF Library Manager",
                 style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 8.dp)
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
             )
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -335,10 +292,7 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                     tonalElevation = 2.dp,
                     modifier = Modifier.height(40.dp)
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Sort: " + when (sortOption) {
                             SortOption.BY_NAME -> "Name"
                             SortOption.BY_DATE -> "Date"
@@ -356,20 +310,18 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                     }
                 }
             }
+
             Spacer(Modifier.height(8.dp))
+
             val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
             val showFolders = if (query.isNotBlank()) emptyList<File>() else folders
+
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                    showFiles.isEmpty() && showFolders.isEmpty() ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(if (searching) "Searching…" else "No items yet.")
-                        }
+                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    showFiles.isEmpty() && showFolders.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (searching) "Searching…" else "No items yet.") }
                     else -> LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 280.dp),
+                        columns = GridCells.Adaptive(minSize = if (isCompact) 160.dp else 280.dp),
                         modifier = Modifier.fillMaxSize().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -382,19 +334,13 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                                 shape = MaterialTheme.shapes.large,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(220.dp)
+                                    .height(if (isCompact) 160.dp else 220.dp)
                                     .clickable { selectedCategory = dir }
                             ) {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(
-                                        Modifier.fillMaxWidth().weight(1f),
-                                        contentAlignment = Alignment.Center
-                                    ) { Text("📁", style = MaterialTheme.typography.headlineLarge) }
-                                    Surface(
-                                        tonalElevation = 0.dp,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(Modifier.padding(14.dp)) {
+                                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("📁", style = MaterialTheme.typography.headlineLarge) }
+                                    Surface(tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(12.dp)) {
                                             Text(dir.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
                                             Text("${countFilesRecursive(dir)} files", style = MaterialTheme.typography.labelSmall)
                                         }
@@ -402,6 +348,7 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                                 }
                             }
                         }
+
                         items(showFiles.size) { i ->
                             val f = showFiles[i]
                             val bmp = thumbs[f]
@@ -415,17 +362,62 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                         }
                     }
                 }
-                FloatingActionButton(
-                    onClick = { picker.launch(arrayOf("application/pdf")) },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(24.dp)
-                ) { Text("⤴") }
+
+                FloatingActionButton(onClick = { picker.launch(arrayOf("application/pdf")) }, modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)) { Text("⤴") }
+            }
+        }
+
+        // Panel derecho solo en pantallas grandes
+        if (!isCompact) {
+            VerticalDivider()
+            Surface(tonalElevation = 1.dp, modifier = Modifier.width(260.dp).fillMaxHeight()) {
+                Column(Modifier.fillMaxSize()) {
+                    Text("Folders", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
+                    if (folders.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("No folders") }
+                    } else {
+                        LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                            items(folders) { dir ->
+                                Row(Modifier.fillMaxWidth().clickable { selectedCategory = dir }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(dir.name, style = MaterialTheme.typography.bodyMedium)
+                                        Text("${countFilesRecursive(dir)} files", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    IconButton(onClick = { folderToDelete = dir }) { Text("🗑") }
+                                }
+                            }
+                        }
+                    }
+
+                    Column(Modifier.padding(12.dp)) {
+                        OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("New folder") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = {
+                                if (newFolderName.isNotBlank()) {
+                                    scope.launch {
+                                        val base = selectedCategory ?: appPdfDir(context)
+                                        val candidate = File(base, newFolderName)
+                                        val ok = withContext(Dispatchers.IO) { candidate.mkdir() }
+                                        if (ok) {
+                                            loadCategory(selectedCategory)
+                                            newFolderName = ""
+                                        } else {
+                                            Toast.makeText(context, "No se pudo crear carpeta", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            }) { Text("Create") }
+                        }
+                    }
+                }
             }
         }
     }
+    // fin layout principal
 }
 
+// ====== UI helpers que podrían haberse perdido ======
 @Composable
 private fun CategoryItem(name: String, count: Int, selected: Boolean, onClick: () -> Unit) {
     Surface(
@@ -538,19 +530,31 @@ private object Perf {
     inline fun <T> time(label: String, block: () -> T): T {
         begin(label)
         val start = System.nanoTime()
-        val result = block()
-        val ns = System.nanoTime() - start
-        end(label, ns)
-        return result
+         try {
+            val result = block()
+            val ns = System.nanoTime() - start
+            end(label, ns)
+            return result
+        } catch (e: Throwable) {
+            val ns = System.nanoTime() - start
+            end(label, ns)
+            throw e
+        }
     }
 
     suspend inline fun <T> timeIO(label: String, crossinline block: suspend () -> T): T {
         begin(label)
         val start = System.nanoTime()
-        val res = withContext(kotlinx.coroutines.Dispatchers.IO) { block() }
-        val ns = System.nanoTime() - start
-        end(label, ns)
-        return res
+        try {
+            val res = withContext(kotlinx.coroutines.Dispatchers.IO) { block() }
+            val ns = System.nanoTime() - start
+            end(label, ns)
+            return res
+        } catch (e: Throwable) {
+            val ns = System.nanoTime() - start
+            end(label, ns)
+            throw e
+        }
     }
 
     fun dumpSummary() {
@@ -569,5 +573,3 @@ private object Perf {
         android.util.Log.d(TAG, "========================")
     }
 }
-
-
