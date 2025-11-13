@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -70,18 +71,21 @@ data class PageAnnotations(
 @Composable
 fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val startTime = remember { System.nanoTime() }
-    Log.i(TAG, "========================================")
     Log.i(TAG, "⏱️ PdfViewerScreen STARTED for: ${file.name}")
-    Log.i(TAG, "========================================")
 
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    var selectedTool by remember { mutableStateOf("pen") }
+    var selectedTool by remember { mutableStateOf("none") } // "none", "pen", "eraser"
     var penColor by remember { mutableStateOf(Color.Red) }
     var strokeWidth by remember { mutableStateOf(0.006f) }
+    var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
+
+    // Estados globales para zoom y pan
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
 
     val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
 
@@ -92,40 +96,34 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         saveJob?.cancel()
         saveJob = scope.launch(Dispatchers.IO) {
             delay(400)
-            try {
+            runCatching {
                 val pages = JSONArray()
                 annotations.toSortedMap().forEach { (idx, page) ->
-                    val jPage = JSONObject()
-                    jPage.put("index", idx)
                     val jPaths = JSONArray()
                     page.paths.forEach { p ->
-                        val jP = JSONObject()
-                        jP.put("e", p.isEraser)
-                        jP.put("c", p.color.toArgb())
-                        jP.put("w", p.strokeWidth)
-                        val pts = JSONArray()
-                        p.points.forEach { o ->
-                            val pair = JSONArray()
-                            pair.put(o.x); pair.put(o.y)
-                            pts.put(pair)
+                        val pts = JSONArray().also { arr ->
+                            p.points.forEach { o ->
+                                arr.put(JSONArray().put(o.x).put(o.y))
+                            }
                         }
-                        jP.put("pts", pts)
-                        jPaths.put(jP)
+                        jPaths.put(
+                            JSONObject()
+                                .put("e", p.isEraser)
+                                .put("c", p.color.toArgb())
+                                .put("w", p.strokeWidth)
+                                .put("pts", pts)
+                        )
                     }
-                    jPage.put("paths", jPaths)
-                    pages.put(jPage)
+                    pages.put(JSONObject().put("index", idx).put("paths", jPaths))
                 }
-                val root = JSONObject().apply {
-                    put("version", 1); put("pages", pages)
-                }
+                val root = JSONObject().put("version", 1).put("pages", pages)
                 val tmp = File(annFile.parentFile, annFile.name + ".tmp")
                 FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
                 if (annFile.exists()) annFile.delete()
                 tmp.renameTo(annFile)
-            } catch (_: Exception) {}
+            }
         }
     }
-
 
     // pantalla completa
     DisposableEffect(Unit) {
@@ -149,7 +147,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val pageCountStart = System.nanoTime()
     LaunchedEffect(Unit) {
         pageCount = holder.pageCount
-        Log.i(TAG, "📄 Page count obtained: $pageCount pages in ${(System.nanoTime() - pageCountStart) / 1_000_000} ms")
+        Log.i(TAG, "📄 Page count: $pageCount in ${(System.nanoTime() - pageCountStart) / 1_000_000} ms")
     }
 
     val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
@@ -172,11 +170,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
 
     LaunchedEffect(screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0) {
-            initialLoading = true
             holder.clearCache()
             for (i in 0 until pageCount) {
-                val old = pageBitmaps.getOrNull(i)
-                if (old != null && !old.isRecycled) try { old.recycle() } catch (_: Exception) {}
+                pageBitmaps.getOrNull(i)?.let { old ->
+                    if (!old.isRecycled) runCatching { old.recycle() }
+                }
                 if (i < pageBitmaps.size) pageBitmaps[i] = null
             }
             initialLoading = false
@@ -184,13 +182,13 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     }
 
     // ===== Render: precarga de primeras páginas (quick + hi primera) =====
-    // Reducimos paralelismo para evitar tormentas y GC
     val preloadStart = System.nanoTime()
     LaunchedEffect(pageCount, screenWidthPx) {
         if (pageCount > 0 && screenWidthPx > 0) {
             val quickW = kotlin.math.min(screenWidthPx, 600)
             val bootCount = kotlin.math.min(readyThreshold + 1, pageCount)
-            val semaphore = Semaphore(1) // antes 2; mejor 1 para evitar colisiones al abrir
+            val semaphore = Semaphore(1) // evita colisiones al abrir páginas
+
             coroutineScope {
                 repeat(bootCount) { idx ->
                     if (pageBitmaps.getOrNull(idx) == null) {
@@ -199,14 +197,10 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                 val bmpQuick = withContext(Dispatchers.Default) {
                                     holder.renderPageQuick(idx, quickW)
                                 }
-                                if (bmpQuick != null) {
-                                    withContext(Dispatchers.Main) {
-                                        if (idx < pageBitmaps.size) {
-                                            val prev = pageBitmaps[idx]
-                                            pageBitmaps[idx] = bmpQuick
-                                            if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                                        }
-                                    }
+                                if (bmpQuick != null && idx < pageBitmaps.size) {
+                                    val prev = pageBitmaps[idx]
+                                    pageBitmaps[idx] = bmpQuick
+                                    if (prev != null && prev != bmpQuick && !prev.isRecycled) runCatching { prev.recycle() }
                                 }
                             }
                         }
@@ -218,10 +212,10 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 if (hi != null && 0 < pageBitmaps.size) {
                     val prev = pageBitmaps[0]
                     pageBitmaps[0] = hi
-                    if (prev != null && prev != hi && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
+                    if (prev != null && prev != hi && !prev.isRecycled) runCatching { prev.recycle() }
                 }
             }
-            Log.i(TAG, "🚀 Initial preload completed in ${(System.nanoTime() - preloadStart) / 1_000_000} ms")
+            Log.i(TAG, "🚀 Initial preload in ${(System.nanoTime() - preloadStart) / 1_000_000} ms")
         }
     }
 
@@ -230,7 +224,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             .collectLatest { loaded ->
                 if (loaded >= readyThreshold) {
                     showInitialOverlay = false
-                    Log.i(TAG, "✨ Initial overlay hidden - VIEWER READY in ${(System.nanoTime() - startTime) / 1_000_000} ms total")
+                    Log.i(TAG, "✨ Viewer READY in ${(System.nanoTime() - startTime) / 1_000_000} ms")
                 }
             }
     }
@@ -251,7 +245,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             .collectLatest { isScrolling = it }
     }
 
-    // Render on-demand según páginas visibles, con ventana de prefetch y deduplicación
+    // Render bajo demanda y prefetch
     val inFlightJobs = remember { mutableStateMapOf<String, Job>() }
     LaunchedEffect(listState, pageCount, screenWidthPx) {
         if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
@@ -261,62 +255,53 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 if (visibles.isEmpty()) return@collectLatest
                 val window = 2
                 val targetsQuick = buildSet {
-                    visibles.forEach { v ->
-                        for (i in (v - window)..(v + window)) if (i in 0 until pageCount) add(i)
-                    }
+                    visibles.forEach { v -> for (i in (v - window)..(v + window)) if (i in 0 until pageCount) add(i) }
                 }
                 val targetsHi = visibles.toSet()
                 val quickW = kotlin.math.min(screenWidthPx, 600)
-                val sem = Semaphore(2) // antes 3; 2 evita saturar CPU/GC
+                val sem = Semaphore(2)
 
-                // 1) Cancelar jobs que ya no son necesarios
+                // Cancelar jobs que ya no son necesarios
                 val stillNeeded = (targetsQuick + targetsHi)
-                inFlightJobs.keys
-                    .toList()
-                    .forEach { key ->
-                        val idx = key.substringAfter(':').toIntOrNull()
-                        if (idx == null || idx !in stillNeeded) {
-                            inFlightJobs.remove(key)?.cancel()
-                        }
-                    }
+                inFlightJobs.keys.toList().forEach { key ->
+                    val idx = key.substringAfter(':').toIntOrNull()
+                    if (idx == null || idx !in stillNeeded) inFlightJobs.remove(key)?.cancel()
+                }
 
-                // 2) Lanzar quick para ventana alrededor
+                // Quick
                 targetsQuick.forEach { idx ->
                     if (pageBitmaps.getOrNull(idx) == null) {
                         val key = "q:$idx"
-                        // si hay un hi en curso para el mismo idx, no lanzamos quick
                         if (inFlightJobs["h:$idx"]?.isActive == true) return@forEach
-                        // evita duplicados: cancela previo si existía
                         inFlightJobs[key]?.cancel()
                         inFlightJobs[key] = launch {
-                            val renderStart = System.nanoTime()
+                            val t0 = System.nanoTime()
                             sem.withPermit {
                                 val bmp = withContext(Dispatchers.Default) { holder.renderPageQuick(idx, quickW) }
                                 if (bmp != null && idx < pageBitmaps.size && pageBitmaps[idx] == null) {
                                     pageBitmaps[idx] = bmp
-                                    Log.i(TAG, "⚡ Quick render page $idx in ${(System.nanoTime() - renderStart) / 1_000_000} ms")
+                                    Log.i(TAG, "⚡ Quick page $idx in ${(System.nanoTime() - t0) / 1_000_000} ms")
                                 }
                             }
                         }
                     }
                 }
 
-                // 3) Alta resolución para los visibles (si no se desplaza, prioridad)
+                // Alta resolución
                 if (!isScrolling) {
                     targetsHi.forEach { idx ->
                         val keyHi = "h:$idx"
                         if (inFlightJobs[keyHi]?.isActive == true) return@forEach
-                        // si había un quick en curso para el mismo idx, cancelarlo
                         inFlightJobs["q:$idx"]?.cancel()
                         inFlightJobs[keyHi] = launch {
-                            val renderStart = System.nanoTime()
+                            val t0 = System.nanoTime()
                             val bmp = withContext(Dispatchers.Default) { holder.renderPageToWidth(idx, screenWidthPx) }
                             if (bmp != null && idx < pageBitmaps.size) {
                                 val prev = pageBitmaps[idx]
                                 if (prev == null || prev.width < bmp.width * 0.9f) {
                                     pageBitmaps[idx] = bmp
-                                    if (prev != null && prev != bmp && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                                    Log.i(TAG, "🎯 High res render page $idx in ${(System.nanoTime() - renderStart) / 1_000_000} ms")
+                                    if (prev != null && prev != bmp && !prev.isRecycled) runCatching { prev.recycle() }
+                                    Log.i(TAG, "🎯 High page $idx in ${(System.nanoTime() - t0) / 1_000_000} ms")
                                 }
                             }
                         }
@@ -325,7 +310,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             }
     }
 
-    // Utilidad de borrado por proximidad (distancia punto-segmento en coords normalizadas)
+    // Utilidad de borrado por proximidad
     fun distancePointToSegment(p: Offset, a: Offset, b: Offset): Float {
         val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
         val vx = bx - ax; val vy = by - ay
@@ -361,21 +346,15 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color(0xFF424242), modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (showInitialOverlay && pageCount > 0) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = Color.White)
                         Spacer(modifier = Modifier.height(16.dp))
                         val loadedCount = pageBitmaps.count { it != null }
-                        Text(
-                            text = "Preparando visor: $loadedCount / $pageCount",
-                            color = Color.White
-                        )
+                        Text("Preparando visor: $loadedCount / $pageCount", color = Color.White)
                     }
                 }
             } else {
@@ -384,11 +363,84 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         Text("Cargando…", color = Color.White)
                     }
                 } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = 0.dp),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (selectedTool == "none") {
+                                    Modifier.pointerInput(Unit) {
+                                        awaitPointerEventScope {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val changes = event.changes
+
+                                                when {
+                                                    changes.size >= 2 -> {
+                                                        // Gesto con 2+ dedos: zoom o pan
+                                                        val p1 = changes[0].position
+                                                        val p2 = changes[1].position
+
+                                                        val dx = p2.x - p1.x
+                                                        val dy = p2.y - p1.y
+                                                        val currentDistance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                                                        // Umbral MUY BAJO: 20px (funciona incluso con dedos muy cercanos)
+                                                        if (currentDistance >= 20f) {
+                                                            val p1Prev = changes[0].previousPosition
+                                                            val p2Prev = changes[1].previousPosition
+                                                            val dxPrev = p2Prev.x - p1Prev.x
+                                                            val dyPrev = p2Prev.y - p1Prev.y
+                                                            val prevDistance = kotlin.math.sqrt(dxPrev * dxPrev + dyPrev * dyPrev)
+
+                                                            if (prevDistance > 0f) {
+                                                                // Calcular factor de zoom
+                                                                val zoomFactor = currentDistance / prevDistance
+
+                                                                // Aplicar zoom incluso con cambios mínimos
+                                                                if (kotlin.math.abs(zoomFactor - 1f) > 0.001f) {
+                                                                    val newScale = (scale * zoomFactor).coerceIn(1f, 4f)
+                                                                    scale = newScale
+
+                                                                    changes.forEach { it.consume() }
+                                                                }
+
+                                                                // Pan horizontal cuando hay zoom y no hay cambio de escala significativo
+                                                                if (scale > 1f && kotlin.math.abs(zoomFactor - 1f) < 0.02f) {
+                                                                    val centerX = (p1.x + p2.x) / 2f
+                                                                    val centerXPrev = (p1Prev.x + p2Prev.x) / 2f
+                                                                    val panDelta = centerX - centerXPrev
+
+                                                                    val maxX = (size.width * (scale - 1f)) / 2f
+                                                                    offsetX = (offsetX + panDelta).coerceIn(-maxX, maxX)
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Resetear offset si volvemos a escala 1
+                                                        if (scale <= 1f) {
+                                                            offsetX = 0f
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else Modifier
+                            )
                     ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(
+                                    scaleX = scale,
+                                    scaleY = scale,
+                                    translationX = offsetX,
+                                    translationY = 0f // Solo pan horizontal, el vertical lo maneja el scroll
+                                ),
+                            contentPadding = PaddingValues(top = 64.dp, bottom = 16.dp),
+                            userScrollEnabled = true, // Siempre permitir scroll vertical
+                        ) {
                         items(pageCount) { index ->
                             val bmp = pageBitmaps.getOrNull(index)
                             PdfPageItem(
@@ -400,6 +452,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                 selectedTool = selectedTool,
                                 penColor = penColor,
                                 strokeWidth = strokeWidth,
+                                smoothingEnabled = smoothingEnabled,
                                 onPathAdded = { path ->
                                     annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                     scheduleSave()
@@ -409,7 +462,12 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                     erasePathsAt(index, eraserPoints, thr)
                                 }
                             )
+                            // Separador entre páginas
+                            if (index < pageCount - 1) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
                         }
+                    }
                     }
                 }
             }
@@ -437,27 +495,27 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             )
 
-
-            // Barra de herramientas siempre visible
-            RightToolBar(
+            // Barra de herramientas en el lado izquierdo
+            LeftToolBar(
                 selectedTool = selectedTool,
                 penColor = penColor,
                 strokeWidth = strokeWidth,
+                smoothingEnabled = smoothingEnabled,
                 onSelectTool = { selectedTool = it },
                 onColorClick = { showColorPicker = true },
                 onStrokeChange = { strokeWidth = it },
+                onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
                 onUndo = {
                     val currentPage = listState.firstVisibleItemIndex
                     annotations[currentPage]?.paths?.removeLastOrNull()
                     scheduleSave()
                 },
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
+                    .align(Alignment.CenterStart)
                     .fillMaxHeight()
-                    .padding(end = 90.dp)
+                    .padding(start = 16.dp)
             )
 
-            // selector de color
             if (showColorPicker) {
                 ColorPickerDialog(
                     currentColor = penColor,
@@ -473,7 +531,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     LaunchedEffect(annFile.path) {
         withContext(Dispatchers.IO) {
             if (annFile.exists()) {
-                try {
+                runCatching {
                     val text = FileInputStream(annFile).use { it.readBytes().toString(Charsets.UTF_8) }
                     val root = JSONObject(text)
                     val pages = root.optJSONArray("pages") ?: JSONArray()
@@ -485,25 +543,16 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         val list = mutableListOf<DrawingPath>()
                         for (k in 0 until jPaths.length()) {
                             val jpath = jPaths.getJSONObject(k)
-                            val isE = jpath.optBoolean("e", false)
-                            val colorInt = jpath.optInt("c", 0xFF000000.toInt())
                             val wNorm = jpath.optDouble("w", 0.005).toFloat()
+                            val colorInt = jpath.optInt("c", 0xFF000000.toInt())
+                            val isE = jpath.optBoolean("e", false)
                             val ptsArr = jpath.optJSONArray("pts") ?: JSONArray()
                             val pts = mutableListOf<Offset>()
                             for (pIdx in 0 until ptsArr.length()) {
                                 val pair = ptsArr.getJSONArray(pIdx)
-                                val x = pair.optDouble(0, 0.0).toFloat()
-                                val y = pair.optDouble(1, 0.0).toFloat()
-                                pts.add(Offset(x, y))
+                                pts.add(Offset(pair.optDouble(0, 0.0).toFloat(), pair.optDouble(1, 0.0).toFloat()))
                             }
-                            list.add(
-                                DrawingPath(
-                                    points = pts,
-                                    color = Color(colorInt),
-                                    strokeWidth = wNorm,
-                                    isEraser = isE
-                                )
-                            )
+                            list.add(DrawingPath(pts, Color(colorInt), wNorm, isE))
                         }
                         loaded[idx] = PageAnnotations(idx, list)
                     }
@@ -511,7 +560,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         annotations.clear()
                         annotations.putAll(loaded)
                     }
-                } catch (_: Exception) {}
+                }
             }
         }
         Log.i(TAG, "📝 Annotations loaded in ${(System.nanoTime() - annotationsStart) / 1_000_000} ms")
@@ -521,68 +570,58 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     DisposableEffect(holder) {
         onDispose {
             // Guardar última página vista
-            try {
+            runCatching {
                 val prefs = context.getSharedPreferences("reader_state", android.content.Context.MODE_PRIVATE)
                 prefs.edit().putInt("last_page::${file.absolutePath}", listState.firstVisibleItemIndex.coerceAtLeast(0)).apply()
-            } catch (_: Exception) {}
-
-            // 1) Cancelar trabajos en vuelo
-            try {
-                // Cancela y limpia el map de jobs
-                // (El remember { mutableStateMapOf } está en este scope)
-            } catch (_: Exception) {}
-
-            // Cancela concretamente los renders activos
-            // Nota: el map 'inFlightJobs' está en el remember anterior
-            try {
-                inFlightJobs.values.forEach { it.cancel() }
-                inFlightJobs.clear()
-            } catch (_: Exception) {}
-
-            // 2) Cerrar holder (después de cancelar)
-            holder.close()
-
-            // 3) Liberar bitmaps (ligera espera para no pelear con Compose)
-            runCatching {
-                scope.launch(Dispatchers.Default) {
-                    delay(32)
-                    pageBitmaps.forEach { bmp ->
-                        try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
-                    }
-                    pageBitmaps.clear()
-                }
             }
 
-            // 4) Guardado final bloqueante
+            // Cancelar renders activos
+            runCatching {
+                inFlightJobs.values.forEach { it.cancel() }
+                inFlightJobs.clear()
+            }
+
+            // Cerrar holder
+            holder.close()
+
+            // Liberar bitmaps
+            scope.launch(Dispatchers.Default) {
+                delay(32)
+                pageBitmaps.forEach { bmp ->
+                    if (bmp != null && !bmp.isRecycled) runCatching { bmp.recycle() }
+                }
+                pageBitmaps.clear()
+            }
+
+            // Guardado final bloqueante
             runCatching {
                 val pages = JSONArray()
                 annotations.toSortedMap().forEach { (idx, page) ->
-                    val jPage = JSONObject()
-                    jPage.put("index", idx)
                     val jPaths = JSONArray()
                     page.paths.forEach { p ->
-                        val jP = JSONObject()
-                        jP.put("e", p.isEraser)
-                        jP.put("c", p.color.toArgb())
-                        jP.put("w", p.strokeWidth)
-                        val pts = JSONArray()
-                        p.points.forEach { o ->
-                            val pair = JSONArray(); pair.put(o.x); pair.put(o.y); pts.put(pair)
+                        val pts = JSONArray().also { arr ->
+                            p.points.forEach { o ->
+                                arr.put(JSONArray().put(o.x).put(o.y))
+                            }
                         }
-                        jP.put("pts", pts)
-                        jPaths.put(jP)
+                        jPaths.put(
+                            JSONObject()
+                                .put("e", p.isEraser)
+                                .put("c", p.color.toArgb())
+                                .put("w", p.strokeWidth)
+                                .put("pts", pts)
+                        )
                     }
-                    jPage.put("paths", jPaths)
-                    pages.put(jPage)
+                    pages.put(JSONObject().put("index", idx).put("paths", jPaths))
                 }
-                val root = JSONObject(); root.put("version", 1); root.put("pages", pages)
+                val root = JSONObject().put("version", 1).put("pages", pages)
                 val tmp = File(annFile.parentFile, annFile.name + ".tmp")
                 FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
-                if (annFile.exists()) annFile.delete(); tmp.renameTo(annFile)
+                if (annFile.exists()) annFile.delete()
+                tmp.renameTo(annFile)
             }
-            Log.i(TAG, "========================================")
-            Log.i(TAG, "🏁 PdfViewerScreen CLOSED after ${(System.nanoTime() - startTime) / 1_000_000} ms total")
-            Log.i(TAG, "========================================")
+
+            Log.i(TAG, "🏁 PdfViewerScreen CLOSED after ${(System.nanoTime() - startTime) / 1_000_000} ms")
         }
     }
 }
@@ -598,9 +637,10 @@ private fun PdfPageItem(
     showLoadingLabel: Boolean,
     editMode: Boolean = false,
     annotations: PageAnnotations = PageAnnotations(index),
-    selectedTool: String = "pen",
+    selectedTool: String = "none",
     penColor: Color = Color.Red,
     strokeWidth: Float = 0.006f,
+    smoothingEnabled: Boolean = true,
     onPathAdded: (DrawingPath) -> Unit = {},
     onErase: (List<Offset>) -> Unit = {}
 ) {
@@ -611,14 +651,41 @@ private fun PdfPageItem(
     fun toNorm(o: Offset): Offset = if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else o
     fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
 
+    // Función de suavizado (Chaikin's algorithm)
+    fun smoothPath(points: List<Offset>, iterations: Int = 2): List<Offset> {
+        if (points.size < 3) return points
+        var smoothed = points
+        repeat(iterations) {
+            val result = mutableListOf<Offset>()
+            result.add(smoothed.first())
+            for (i in 0 until smoothed.size - 1) {
+                val p0 = smoothed[i]
+                val p1 = smoothed[i + 1]
+                val q = Offset(0.75f * p0.x + 0.25f * p1.x, 0.75f * p0.y + 0.25f * p1.y)
+                val r = Offset(0.25f * p0.x + 0.75f * p1.x, 0.25f * p0.y + 0.75f * p1.y)
+                result.add(q)
+                result.add(r)
+            }
+            result.add(smoothed.last())
+            smoothed = result
+        }
+        return smoothed
+    }
+
     if (bitmap != null) {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF303030)) // Fondo gris oscuro para cada página
+            .padding(8.dp) // Padding para crear separación visual
+        ) {
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                    .background(Color.White) // Fondo blanco para la página
                     .then(
-                        if (editMode) {
+                        if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
+                            // Solo gestos de dibujo cuando hay herramienta activa
                             Modifier.pointerInput(selectedTool, penColor, strokeWidth, canvasW, canvasH) {
                                 detectDragGestures(
                                     onDragStart = { offset ->
@@ -626,21 +693,22 @@ private fun PdfPageItem(
                                     },
                                     onDrag = { change, _ ->
                                         change.consume()
-                                        currentPath = currentPath.toMutableList().apply { add(toNorm(change.position)) }
+                                        currentPath = currentPath.toMutableList().apply {
+                                            add(toNorm(change.position))
+                                        }
                                     },
                                     onDragEnd = {
                                         if (currentPath.size > 1) {
-                                            if (selectedTool == "eraser") {
-                                                onErase(currentPath.toList())
+                                            val finalPath = if (smoothingEnabled && selectedTool == "pen") {
+                                                smoothPath(currentPath.toList())
                                             } else {
-                                                onPathAdded(
-                                                    DrawingPath(
-                                                        points = currentPath.toList(),
-                                                        color = penColor,
-                                                        strokeWidth = strokeWidth,
-                                                        isEraser = false
-                                                    )
-                                                )
+                                                currentPath.toList()
+                                            }
+
+                                            if (selectedTool == "eraser") {
+                                                onErase(finalPath)
+                                            } else {
+                                                onPathAdded(DrawingPath(finalPath, penColor, strokeWidth, false))
                                             }
                                         }
                                         currentPath = mutableListOf()
@@ -652,6 +720,7 @@ private fun PdfPageItem(
             ) {
                 canvasW = size.width
                 canvasH = size.height
+
                 drawImage(
                     image = bitmap.asImageBitmap(),
                     dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
@@ -668,11 +737,7 @@ private fun PdfPageItem(
                                     lineTo(p.x, p.y)
                                 }
                             }
-                            drawPath(
-                                path = path,
-                                color = drawingPath.color,
-                                style = Stroke(width = drawingPath.strokeWidth * canvasW)
-                            )
+                            drawPath(path = path, color = drawingPath.color, style = Stroke(width = drawingPath.strokeWidth * canvasW))
                         }
                     }
 
@@ -685,11 +750,7 @@ private fun PdfPageItem(
                                 lineTo(p.x, p.y)
                             }
                         }
-                        drawPath(
-                            path = path,
-                            color = penColor,
-                            style = Stroke(width = strokeWidth * canvasW)
-                        )
+                        drawPath(path = path, color = penColor, style = Stroke(width = strokeWidth * canvasW))
                     }
                 }
             }
@@ -741,18 +802,14 @@ private class PdfRendererHolder(file: File) {
 
     val pageCount: Int get() = renderer.pageCount
 
-    // >>> Usa ARGB_8888 por defecto (más compatible)
+    // ARGB_8888 por defecto (más compatible con PdfRenderer)
     suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
-        cache.get(index)?.let { existing ->
-            if (existing.width >= quickTargetW * 0.95f) return existing
-        }
+        cache.get(index)?.let { existing -> if (existing.width >= quickTargetW * 0.95f) return existing }
         return renderInternal(index, quickTargetW, Bitmap.Config.ARGB_8888)
     }
 
     suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
-        cache.get(index)?.let { existing ->
-            if (existing.width >= targetW * 0.95f) return existing
-        }
+        cache.get(index)?.let { existing -> if (existing.width >= targetW * 0.95f) return existing }
         return renderInternal(index, targetW, Bitmap.Config.ARGB_8888)
     }
 
@@ -764,41 +821,36 @@ private class PdfRendererHolder(file: File) {
                 renderMutex.withLock {
                     if (closed) return null
                     if (index !in 0 until renderer.pageCount) return null
-
                     page = renderer.openPage(index)
                     val srcW = page!!.width
                     val srcH = page!!.height
                     val scale = (targetW.toFloat() / srcW).coerceIn(0.1f, 8f)
                     val outW = (srcW * scale).toInt().coerceAtLeast(1)
                     val outH = (srcH * scale).toInt().coerceAtLeast(1)
-
                     val bitmap = Bitmap.createBitmap(outW, outH, conf)
                     page!!.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     cache.put(index, bitmap)
                     bitmap
                 }
             } catch (e: IllegalArgumentException) {
-                // Esto es lo que ves en el log: Unsupported pixel format
-                android.util.Log.w("PDFPERF", "render failed idx=$index w=$targetW (closed=$closed) with $conf: ${e.message}")
+                Log.w("PDFPERF", "render failed idx=$index w=$targetW with $conf: ${e.message}")
                 null
             } catch (e: Throwable) {
-                android.util.Log.w("PDFPERF", "render failed idx=$index w=$targetW (closed=$closed): ${e.javaClass.simpleName}: ${e.message}")
+                Log.w("PDFPERF", "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}")
                 null
             } finally {
-                try { page?.close() } catch (_: Exception) {}
+                runCatching { page?.close() }
             }
         }
 
-        // 1º intento con el config pedido
         var bmp = attempt(config)
-        // Fallback automático a ARGB_8888 si falló (por soporte de PdfRenderer)
         if (bmp == null && config != Bitmap.Config.ARGB_8888) {
             bmp = attempt(Bitmap.Config.ARGB_8888)
         }
         return bmp
     }
 
-    fun clearCache() = runCatching { cache.evictAll() }.onFailure { }.let {}
+    fun clearCache() { runCatching { cache.evictAll() } }
 
     fun close() {
         if (closed) return
@@ -809,20 +861,20 @@ private class PdfRendererHolder(file: File) {
     }
 }
 
-
-
 // ======================================================
-//  BARRA DERECHA (lápiz / borrador)
+//  BARRA IZQUIERDA (herramientas de edición)
 // ======================================================
 
 @Composable
-private fun RightToolBar(
+private fun LeftToolBar(
     selectedTool: String,
     penColor: Color,
     strokeWidth: Float,
+    smoothingEnabled: Boolean,
     onSelectTool: (String) -> Unit,
     onColorClick: () -> Unit,
     onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
     onUndo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -837,13 +889,20 @@ private fun RightToolBar(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Botón de navegación (desactivar herramientas)
+            ToolButton(
+                icon = Icons.Default.TouchApp,
+                label = "Navegar",
+                selected = selectedTool == "none",
+                onClick = { onSelectTool("none") }
+            )
+
             ToolButton(
                 icon = Icons.Default.Edit,
                 label = "Lápiz",
                 selected = selectedTool == "pen",
                 onClick = { onSelectTool("pen") }
             )
-
             ToolButton(
                 icon = Icons.Default.Delete,
                 label = "Borrador",
@@ -855,6 +914,7 @@ private fun RightToolBar(
             HorizontalDivider(color = Color.White.copy(alpha = 0.2f), modifier = Modifier.width(48.dp))
             Spacer(Modifier.height(8.dp))
 
+            // Selector de color
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = penColor,
@@ -864,10 +924,8 @@ private fun RightToolBar(
                 shadowElevation = 2.dp
             ) {}
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(vertical = 8.dp)
-            ) {
+            // Tamaños de trazo
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 8.dp)) {
                 ToolButton(
                     icon = Icons.Default.Remove,
                     label = "Fino",
@@ -892,6 +950,18 @@ private fun RightToolBar(
                     compact = true
                 )
             }
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.2f), modifier = Modifier.width(48.dp))
+            Spacer(Modifier.height(8.dp))
+
+            // Botón de suavizado (afinador)
+            ToolButton(
+                icon = Icons.Default.Tune,
+                label = "Afinador",
+                selected = smoothingEnabled,
+                onClick = onToggleSmoothing
+            )
 
             Spacer(Modifier.weight(1f))
 
@@ -924,16 +994,8 @@ private fun ToolButton(
             .size(size)
             .clickable { onClick() }
     ) {
-        Box(
-            Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
-            )
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
         }
     }
 }
@@ -958,7 +1020,6 @@ private fun ColorPickerDialog(
                     Color.Black, Color.Magenta, Color.Cyan, Color(0xFFFF6B6B),
                     Color(0xFF4ECDC4), Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA)
                 )
-
                 colors.chunked(4).forEach { rowColors ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -970,16 +1031,14 @@ private fun ColorPickerDialog(
                                 color = color,
                                 modifier = Modifier
                                     .size(56.dp)
-                                    .padding(4.dp)
                                     .clickable {
                                         onColorSelected(color)
                                         onDismiss()
                                     },
                                 shadowElevation = if (color == currentColor) 4.dp else 0.dp,
-                                border = if (color == currentColor) androidx.compose.foundation.BorderStroke(
-                                    2.dp,
-                                    Color.Black
-                                ) else null
+                                border = if (color == currentColor)
+                                    androidx.compose.foundation.BorderStroke(2.dp, Color.Black)
+                                else null
                             ) {}
                         }
                     }
@@ -987,10 +1046,6 @@ private fun ColorPickerDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cerrar")
-            }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
     )
 }
