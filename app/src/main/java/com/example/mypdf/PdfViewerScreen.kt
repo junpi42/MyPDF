@@ -1,21 +1,28 @@
 package com.example.mypdf
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -34,10 +41,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -51,14 +58,15 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val TAG = "PDF_TIMING"
 
 data class DrawingPath(
-    val points: List<Offset>, // puntos normalizados [0..1]
+    val points: List<Offset>,
     val color: Color,
-    val strokeWidth: Float,   // ancho normalizado relativo al ancho del lienzo
+    val strokeWidth: Float,
     val isEraser: Boolean = false
 )
 
@@ -70,28 +78,154 @@ data class PageAnnotations(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfViewerScreen(file: File, onBack: () -> Unit) {
-    val startTime = remember { System.nanoTime() }
-    Log.i(TAG, "⏱️ PdfViewerScreen STARTED for: ${file.name}")
-
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    var selectedTool by remember { mutableStateOf("none") } // "none", "pen", "eraser"
+    val tunner = remember { AudioTuner() }
+
+    var selectedTool by remember { mutableStateOf("none") }
     var penColor by remember { mutableStateOf(Color.Red) }
     var strokeWidth by remember { mutableStateOf(0.006f) }
     var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
 
-    // Estados globales para zoom y pan
+    var tunerOn by remember { mutableStateOf(false) }
+    var concertModeOn by remember { mutableStateOf(false) }
+
+    var showTunerSettings by remember { mutableStateOf(false) }
+    var showNeedleTuner by remember { mutableStateOf(false) }
+
+    // zoom / pan
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
 
-    val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            tunerOn = true
+        } else {
+            tunerOn = false
+            runCatching { tunner.stopTuning(clearState = false) }
+        }
+    }
 
-    // ===== archivo de anotaciones + guardado diferido =====
-    val annFile = remember(file.path) { File(file.parentFile, file.nameWithoutExtension + ".ann.json") }
+    fun ensureMicPermission(onGranted: () -> Unit) {
+        val ok = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (ok) onGranted() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    LaunchedEffect(tunerOn) {
+        if (tunerOn) {
+            val ok = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                tunerOn = false
+            } else {
+                try {
+                    tunner.startTuning(scope)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Error starting tuner: ${e.message}")
+                    tunerOn = false
+                }
+            }
+        } else {
+            runCatching { tunner.stopTuning(clearState = false) }
+        }
+    }
+
+    // status bar normal
+    DisposableEffect(Unit) {
+        WindowCompat.setDecorFitsSystemWindows(activity.window, true)
+        val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+        controller.isAppearanceLightStatusBars = false
+        activity.window.statusBarColor = Color.Black.toArgb()
+
+        onDispose {
+            runCatching { tunner.stopTuning(clearState = false) }
+        }
+    }
+
+    // ===== PDF / renderizado =====
+    val holder = remember(file.path) { PdfRendererHolder(file) }
+    val pageCount = holder.pageCount
+    val pageBitmaps = remember {
+        mutableStateListOf<Bitmap?>().apply {
+            repeat(pageCount) { add(null) }
+        }
+    }
+
+    val config = LocalConfiguration.current
+    val screenWidthPx =
+        (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
+    val maxTargetWidthPx = 1920
+
+    // precarga rápida
+    LaunchedEffect(pageCount, screenWidthPx) {
+        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
+        val effectiveWidth = min(screenWidthPx, maxTargetWidthPx)
+        val quickW = min(effectiveWidth, 600)
+        val boot = min(3, pageCount)
+        val sem = Semaphore(1)
+        coroutineScope {
+            repeat(boot) { i ->
+                if (pageBitmaps[i] == null) {
+                    launch {
+                        sem.withPermit {
+                            val bmp = withContext(Dispatchers.Default) {
+                                holder.renderPageQuick(i, quickW)
+                            }
+                            if (bmp != null) pageBitmaps[i] = bmp
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val listState = rememberLazyListState()
+
+    // render hi-res bajo demanda
+    LaunchedEffect(listState, pageCount, screenWidthPx) {
+        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collectLatest { visibles ->
+                if (visibles.isEmpty()) return@collectLatest
+                val hiW = min(screenWidthPx, maxTargetWidthPx)
+                visibles.take(2).forEach { idx ->
+                    launch {
+                        val bmp = withContext(Dispatchers.Default) {
+                            holder.renderPageToWidth(idx, hiW)
+                        }
+                        bmp?.let {
+                            if (idx in 0 until pageCount) {
+                                val prev = pageBitmaps[idx]
+                                if (prev == null || prev.width < it.width * 0.9f) {
+                                    pageBitmaps[idx] = it
+                                    if (prev != null && !prev.isRecycled) prev.recycle()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
+    // ===== anotaciones =====
+    val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
+    val annFile = remember(file.path) {
+        File(file.parentFile, file.nameWithoutExtension + ".ann.json")
+    }
     var saveJob by remember { mutableStateOf<Job?>(null) }
+
     val scheduleSave: () -> Unit = {
         saveJob?.cancel()
         saveJob = scope.launch(Dispatchers.IO) {
@@ -118,384 +252,238 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 }
                 val root = JSONObject().put("version", 1).put("pages", pages)
                 val tmp = File(annFile.parentFile, annFile.name + ".tmp")
-                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
+                FileOutputStream(tmp).use {
+                    it.write(root.toString().toByteArray(Charsets.UTF_8))
+                }
                 if (annFile.exists()) annFile.delete()
                 tmp.renameTo(annFile)
             }
         }
     }
 
-    // pantalla completa
-    DisposableEffect(Unit) {
-        WindowCompat.setDecorFitsSystemWindows(activity.window, false)
-        val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsetsCompat.Type.systemBars())
-        onDispose {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-            WindowCompat.setDecorFitsSystemWindows(activity.window, true)
-        }
-    }
-
-    // Holder con caché LRU y utilidades de render
-    val holderStart = System.nanoTime()
-    val holder = remember(file.path) { PdfRendererHolder(file) }
-    Log.i(TAG, "✅ Holder initialized in ${(System.nanoTime() - holderStart) / 1_000_000} ms")
-
-    var pageCount by remember { mutableStateOf(0) }
-    val pageCountStart = System.nanoTime()
-    LaunchedEffect(Unit) {
-        pageCount = holder.pageCount
-        Log.i(TAG, "📄 Page count: $pageCount in ${(System.nanoTime() - pageCountStart) / 1_000_000} ms")
-    }
-
-    val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
-
-    var initialLoading by remember { mutableStateOf(true) }
-    val readyThreshold by remember(pageCount) { mutableStateOf(kotlin.math.min(3, kotlin.math.max(pageCount, 0))) }
-    var showInitialOverlay by remember { mutableStateOf(true) }
-
-    LaunchedEffect(pageCount) {
-        if (pageCount > 0) {
-            pageBitmaps.clear()
-            repeat(pageCount) { pageBitmaps.add(null) }
-            showInitialOverlay = true
-            initialLoading = true
-        }
-    }
-
-    val config = LocalConfiguration.current
-    val screenWidthPx = (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
-
-    LaunchedEffect(screenWidthPx) {
-        if (pageCount > 0 && screenWidthPx > 0) {
-            holder.clearCache()
-            for (i in 0 until pageCount) {
-                pageBitmaps.getOrNull(i)?.let { old ->
-                    if (!old.isRecycled) runCatching { old.recycle() }
+    // cargar anotaciones
+    LaunchedEffect(annFile.path) {
+        withContext(Dispatchers.IO) {
+            if (!annFile.exists()) return@withContext
+            runCatching {
+                val text = FileInputStream(annFile).use {
+                    it.readBytes().toString(Charsets.UTF_8)
                 }
-                if (i < pageBitmaps.size) pageBitmaps[i] = null
+                val root = JSONObject(text)
+                val pages = root.optJSONArray("pages") ?: JSONArray()
+                val loaded = mutableMapOf<Int, PageAnnotations>()
+                for (i in 0 until pages.length()) {
+                    val jp = pages.getJSONObject(i)
+                    val idx = jp.optInt("index", i)
+                    val jPaths = jp.optJSONArray("paths") ?: JSONArray()
+                    val list = mutableListOf<DrawingPath>()
+                    for (k in 0 until jPaths.length()) {
+                        val jpath = jPaths.getJSONObject(k)
+                        val w = jpath.optDouble("w", 0.006).toFloat()
+                        val colorInt = jpath.optInt("c", 0xFF000000.toInt())
+                        val isE = jpath.optBoolean("e", false)
+                        val ptsArr = jpath.optJSONArray("pts") ?: JSONArray()
+                        val pts = mutableListOf<Offset>()
+                        for (pIdx in 0 until ptsArr.length()) {
+                            val pair = ptsArr.getJSONArray(pIdx)
+                            pts.add(
+                                Offset(
+                                    pair.optDouble(0, 0.0).toFloat(),
+                                    pair.optDouble(1, 0.0).toFloat()
+                                )
+                            )
+                        }
+                        list.add(DrawingPath(pts, Color(colorInt), w, isE))
+                    }
+                    loaded[idx] = PageAnnotations(idx, list)
+                }
+                withContext(Dispatchers.Main) {
+                    annotations.clear()
+                    annotations.putAll(loaded)
+                }
             }
-            initialLoading = false
         }
     }
 
-    // ===== Render: precarga de primeras páginas (quick + hi primera) =====
-    val preloadStart = System.nanoTime()
-    LaunchedEffect(pageCount, screenWidthPx) {
-        if (pageCount > 0 && screenWidthPx > 0) {
-            val quickW = kotlin.math.min(screenWidthPx, 600)
-            val bootCount = kotlin.math.min(readyThreshold + 1, pageCount)
-            val semaphore = Semaphore(1) // evita colisiones al abrir páginas
+    val topBarHeight = 64.dp
 
-            coroutineScope {
-                repeat(bootCount) { idx ->
-                    if (pageBitmaps.getOrNull(idx) == null) {
-                        launch {
-                            semaphore.withPermit {
-                                val bmpQuick = withContext(Dispatchers.Default) {
-                                    holder.renderPageQuick(idx, quickW)
-                                }
-                                if (bmpQuick != null && idx < pageBitmaps.size) {
-                                    val prev = pageBitmaps[idx]
-                                    pageBitmaps[idx] = bmpQuick
-                                    if (prev != null && prev != bmpQuick && !prev.isRecycled) runCatching { prev.recycle() }
+    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+        Box(Modifier.fillMaxSize()) {
+
+            // ===== contenido PDF con zoom/pan =====
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = topBarHeight)
+                    .then(
+                        if (selectedTool == "none") {
+                            Modifier.pointerInput(selectedTool) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    val newScale = (scale * zoom).coerceIn(1f, 4f)
+                                    if (kotlin.math.abs(newScale - scale) > 0.001f) {
+                                        scale = newScale
+                                    }
+                                    if (scale > 1f) {
+                                        val maxX = (size.width * (scale - 1f)) / 2f
+                                        offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                    } else {
+                                        scale = 1f
+                                        offsetX = 0f
+                                    }
                                 }
                             }
-                        }
-                    }
-                }
-            }
-            if (pageCount > 0) {
-                val hi = withContext(Dispatchers.Default) { holder.renderPageToWidth(0, screenWidthPx) }
-                if (hi != null && 0 < pageBitmaps.size) {
-                    val prev = pageBitmaps[0]
-                    pageBitmaps[0] = hi
-                    if (prev != null && prev != hi && !prev.isRecycled) runCatching { prev.recycle() }
-                }
-            }
-            Log.i(TAG, "🚀 Initial preload in ${(System.nanoTime() - preloadStart) / 1_000_000} ms")
-        }
-    }
-
-    LaunchedEffect(pageBitmaps, readyThreshold) {
-        snapshotFlow { pageBitmaps.count { it != null } }
-            .collectLatest { loaded ->
-                if (loaded >= readyThreshold) {
-                    showInitialOverlay = false
-                    Log.i(TAG, "✨ Viewer READY in ${(System.nanoTime() - startTime) / 1_000_000} ms")
-                }
-            }
-    }
-
-    LaunchedEffect(pageCount) {
-        if (pageCount > 0) {
-            delay(1500)
-            if (pageBitmaps.count { it != null } > 0) showInitialOverlay = false
-        }
-    }
-
-    val listState = rememberLazyListState()
-
-    var isScrolling by remember { mutableStateOf(false) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }
-            .distinctUntilChanged()
-            .collectLatest { isScrolling = it }
-    }
-
-    // Render bajo demanda y prefetch
-    val inFlightJobs = remember { mutableStateMapOf<String, Job>() }
-    LaunchedEffect(listState, pageCount, screenWidthPx) {
-        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
-            .distinctUntilChanged()
-            .collectLatest { visibles ->
-                if (visibles.isEmpty()) return@collectLatest
-                val window = 2
-                val targetsQuick = buildSet {
-                    visibles.forEach { v -> for (i in (v - window)..(v + window)) if (i in 0 until pageCount) add(i) }
-                }
-                val targetsHi = visibles.toSet()
-                val quickW = kotlin.math.min(screenWidthPx, 600)
-                val sem = Semaphore(2)
-
-                // Cancelar jobs que ya no son necesarios
-                val stillNeeded = (targetsQuick + targetsHi)
-                inFlightJobs.keys.toList().forEach { key ->
-                    val idx = key.substringAfter(':').toIntOrNull()
-                    if (idx == null || idx !in stillNeeded) inFlightJobs.remove(key)?.cancel()
-                }
-
-                // Quick
-                targetsQuick.forEach { idx ->
-                    if (pageBitmaps.getOrNull(idx) == null) {
-                        val key = "q:$idx"
-                        if (inFlightJobs["h:$idx"]?.isActive == true) return@forEach
-                        inFlightJobs[key]?.cancel()
-                        inFlightJobs[key] = launch {
-                            val t0 = System.nanoTime()
-                            sem.withPermit {
-                                val bmp = withContext(Dispatchers.Default) { holder.renderPageQuick(idx, quickW) }
-                                if (bmp != null && idx < pageBitmaps.size && pageBitmaps[idx] == null) {
-                                    pageBitmaps[idx] = bmp
-                                    Log.i(TAG, "⚡ Quick page $idx in ${(System.nanoTime() - t0) / 1_000_000} ms")
+                        } else Modifier
+                    )
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = 0f
+                        ),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(pageCount) { index ->
+                        val bmp = pageBitmaps.getOrNull(index)
+                        PdfPageItem(
+                            index = index,
+                            bitmap = bmp,
+                            showLoadingLabel = bmp == null,
+                            editMode = true,
+                            annotations = annotations.getOrPut(index) {
+                                PageAnnotations(index)
+                            },
+                            selectedTool = selectedTool,
+                            penColor = penColor,
+                            strokeWidth = strokeWidth,
+                            smoothingEnabled = smoothingEnabled,
+                            onPathAdded = { path ->
+                                annotations.getOrPut(index) {
+                                    PageAnnotations(index)
+                                }.paths.add(path)
+                                scheduleSave()
+                            },
+                            onErase = { eraserPoints ->
+                                val page = annotations.getOrPut(index) {
+                                    PageAnnotations(index)
                                 }
-                            }
-                        }
-                    }
-                }
-
-                // Alta resolución
-                if (!isScrolling) {
-                    targetsHi.forEach { idx ->
-                        val keyHi = "h:$idx"
-                        if (inFlightJobs[keyHi]?.isActive == true) return@forEach
-                        inFlightJobs["q:$idx"]?.cancel()
-                        inFlightJobs[keyHi] = launch {
-                            val t0 = System.nanoTime()
-                            val bmp = withContext(Dispatchers.Default) { holder.renderPageToWidth(idx, screenWidthPx) }
-                            if (bmp != null && idx < pageBitmaps.size) {
-                                val prev = pageBitmaps[idx]
-                                if (prev == null || prev.width < bmp.width * 0.9f) {
-                                    pageBitmaps[idx] = bmp
-                                    if (prev != null && prev != bmp && !prev.isRecycled) runCatching { prev.recycle() }
-                                    Log.i(TAG, "🎯 High page $idx in ${(System.nanoTime() - t0) / 1_000_000} ms")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-    }
-
-    // Utilidad de borrado por proximidad
-    fun distancePointToSegment(p: Offset, a: Offset, b: Offset): Float {
-        val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
-        val vx = bx - ax; val vy = by - ay
-        val wx = p.x - ax; val wy = p.y - ay
-        val vv = vx * vx + vy * vy
-        val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
-        val nx = ax + t * vx
-        val ny = ay + t * vy
-        val dx = p.x - nx
-        val dy = p.y - ny
-        return kotlin.math.sqrt(dx * dx + dy * dy)
-    }
-
-    fun erasePathsAt(pageIndex: Int, eraserPoints: List<Offset>, threshold: Float) {
-        val page = annotations.getOrPut(pageIndex) { PageAnnotations(pageIndex) }
-        if (page.paths.isEmpty() || eraserPoints.size < 2) return
-        val toRemove = mutableSetOf<Int>()
-        page.paths.forEachIndexed { idx, path ->
-            val pts = path.points
-            if (pts.size < 2) return@forEachIndexed
-            var hit = false
-            loop@ for (i in 0 until pts.size - 1) {
-                val a = pts[i]; val b = pts[i + 1]
-                for (e in eraserPoints) {
-                    if (distancePointToSegment(e, a, b) <= threshold) { hit = true; break@loop }
-                }
-            }
-            if (hit) toRemove.add(idx)
-        }
-        if (toRemove.isNotEmpty()) {
-            toRemove.sortedDescending().forEach { page.paths.removeAt(it) }
-            scheduleSave()
-        }
-    }
-
-    Surface(color = Color(0xFF424242), modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (showInitialOverlay && pageCount > 0) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color.White)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        val loadedCount = pageBitmaps.count { it != null }
-                        Text("Preparando visor: $loadedCount / $pageCount", color = Color.White)
-                    }
-                }
-            } else {
-                if (pageCount <= 0) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Cargando…", color = Color.White)
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (selectedTool == "none") {
-                                    Modifier.pointerInput(Unit) {
-                                        awaitPointerEventScope {
-                                            while (true) {
-                                                val event = awaitPointerEvent()
-                                                val changes = event.changes
-
-                                                when {
-                                                    changes.size >= 2 -> {
-                                                        // Gesto con 2+ dedos: zoom o pan
-                                                        val p1 = changes[0].position
-                                                        val p2 = changes[1].position
-
-                                                        val dx = p2.x - p1.x
-                                                        val dy = p2.y - p1.y
-                                                        val currentDistance = kotlin.math.sqrt(dx * dx + dy * dy)
-
-                                                        // Umbral MUY BAJO: 20px (funciona incluso con dedos muy cercanos)
-                                                        if (currentDistance >= 20f) {
-                                                            val p1Prev = changes[0].previousPosition
-                                                            val p2Prev = changes[1].previousPosition
-                                                            val dxPrev = p2Prev.x - p1Prev.x
-                                                            val dyPrev = p2Prev.y - p1Prev.y
-                                                            val prevDistance = kotlin.math.sqrt(dxPrev * dxPrev + dyPrev * dyPrev)
-
-                                                            if (prevDistance > 0f) {
-                                                                // Calcular factor de zoom
-                                                                val zoomFactor = currentDistance / prevDistance
-
-                                                                // Aplicar zoom incluso con cambios mínimos
-                                                                if (kotlin.math.abs(zoomFactor - 1f) > 0.001f) {
-                                                                    val newScale = (scale * zoomFactor).coerceIn(1f, 4f)
-                                                                    scale = newScale
-
-                                                                    changes.forEach { it.consume() }
-                                                                }
-
-                                                                // Pan horizontal cuando hay zoom y no hay cambio de escala significativo
-                                                                if (scale > 1f && kotlin.math.abs(zoomFactor - 1f) < 0.02f) {
-                                                                    val centerX = (p1.x + p2.x) / 2f
-                                                                    val centerXPrev = (p1Prev.x + p2Prev.x) / 2f
-                                                                    val panDelta = centerX - centerXPrev
-
-                                                                    val maxX = (size.width * (scale - 1f)) / 2f
-                                                                    offsetX = (offsetX + panDelta).coerceIn(-maxX, maxX)
-                                                                }
-                                                            }
-                                                        }
-
-                                                        // Resetear offset si volvemos a escala 1
-                                                        if (scale <= 1f) {
-                                                            offsetX = 0f
-                                                        }
-                                                    }
-                                                }
+                                val toRemove = mutableSetOf<Int>()
+                                page.paths.forEachIndexed { pIdx, p ->
+                                    val pts = p.points
+                                    if (pts.size < 2) return@forEachIndexed
+                                    var hit = false
+                                    for (i in 0 until pts.size - 1) {
+                                        val a = pts[i]; val b = pts[i + 1]
+                                        if (eraserPoints.any { e ->
+                                                distancePointToSegment(
+                                                    e,
+                                                    a,
+                                                    b
+                                                ) <= (strokeWidth * 100)
                                             }
+                                        ) {
+                                            hit = true; break
                                         }
                                     }
-                                } else Modifier
-                            )
-                    ) {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer(
-                                    scaleX = scale,
-                                    scaleY = scale,
-                                    translationX = offsetX,
-                                    translationY = 0f // Solo pan horizontal, el vertical lo maneja el scroll
-                                ),
-                            contentPadding = PaddingValues(top = 64.dp, bottom = 16.dp),
-                            userScrollEnabled = true, // Siempre permitir scroll vertical
-                        ) {
-                        items(pageCount) { index ->
-                            val bmp = pageBitmaps.getOrNull(index)
-                            PdfPageItem(
-                                index = index,
-                                bitmap = bmp,
-                                showLoadingLabel = !isScrolling,
-                                editMode = true,
-                                annotations = annotations.getOrPut(index) { PageAnnotations(index) },
-                                selectedTool = selectedTool,
-                                penColor = penColor,
-                                strokeWidth = strokeWidth,
-                                smoothingEnabled = smoothingEnabled,
-                                onPathAdded = { path ->
-                                    annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
-                                    scheduleSave()
-                                },
-                                onErase = { eraserPoints ->
-                                    val thr = (strokeWidth * 1.5f).coerceAtLeast(0.003f)
-                                    erasePathsAt(index, eraserPoints, thr)
+                                    if (hit) toRemove.add(pIdx)
                                 }
-                            )
-                            // Separador entre páginas
-                            if (index < pageCount - 1) {
-                                Spacer(modifier = Modifier.height(16.dp))
+                                if (toRemove.isNotEmpty()) {
+                                    toRemove.sortedDescending()
+                                        .forEach { page.paths.removeAt(it) }
+                                    scheduleSave()
+                                }
                             }
-                        }
-                    }
+                        )
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
             }
 
-            // top bar (volver, info)
+            // ===== barra superior (sin título, solo iconos) =====
             TopAppBar(
-                title = {
-                    Text(
-                        text = if (initialLoading) "Cargando..." else "Editando • $pageCount páginas",
-                        color = Color.White
-                    )
-                },
+                title = {}, // el título lo ocupamos con el banner flotante
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Atrás",
-                            tint = Color.White
+                            Icons.Default.Home,
+                            contentDescription = "Volver",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            if (!tunerOn) {
+                                ensureMicPermission { tunerOn = true }
+                            } else {
+                                tunerOn = false
+                                showNeedleTuner = false
+                            }
+                        }
+                    ) {
+                        Box(modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                Icons.Default.MusicNote,
+                                contentDescription = if (tunerOn) "Parar afinador" else "Encender afinador",
+                                tint = Color.White,
+                                modifier = Modifier.matchParentSize()
+                            )
+                            if (tunerOn) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .background(
+                                            Color(0xFFE53935),
+                                            RoundedCornerShape(999.dp)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                    IconButton(onClick = { concertModeOn = !concertModeOn }) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = "Concert",
+                            tint = if (concertModeOn) Color(0xFFFFC107) else Color.White,
+                            modifier = Modifier.size(32.dp)
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0x66000000),
+                    containerColor = Color.Black,
                     titleContentColor = Color.White
-                )
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(topBarHeight)
+                    .border(1.dp, Color.Black)
             )
 
-            // Barra de herramientas en el lado izquierdo
+            // ===== banner pequeño del afinador, centrado y grande =====
+            if (tunerOn) {
+                TunnerSmall(
+                    tunner = tunner,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = (topBarHeight - 44.dp) / 2) // centrado vertical en la barra
+                        .fillMaxWidth(0.7f)
+                        .height(44.dp),
+                    onClick = { showTunerSettings = true },
+                    onLongPress = {
+                        showNeedleTuner = !showNeedleTuner
+                    }
+                )
+            }
+
+            // barra lateral
             LeftToolBar(
                 selectedTool = selectedTool,
                 penColor = penColor,
@@ -511,9 +499,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     scheduleSave()
                 },
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .padding(start = 16.dp)
+                    .align(Alignment.TopStart)
+                    .padding(top = topBarHeight)
             )
 
             if (showColorPicker) {
@@ -523,334 +510,137 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     onDismiss = { showColorPicker = false }
                 )
             }
-        }
-    }
 
-    // ===== cargar anotaciones guardadas =====
-    val annotationsStart = System.nanoTime()
-    LaunchedEffect(annFile.path) {
-        withContext(Dispatchers.IO) {
-            if (annFile.exists()) {
-                runCatching {
-                    val text = FileInputStream(annFile).use { it.readBytes().toString(Charsets.UTF_8) }
-                    val root = JSONObject(text)
-                    val pages = root.optJSONArray("pages") ?: JSONArray()
-                    val loaded = mutableMapOf<Int, PageAnnotations>()
-                    for (i in 0 until pages.length()) {
-                        val jp = pages.getJSONObject(i)
-                        val idx = jp.optInt("index", i)
-                        val jPaths = jp.optJSONArray("paths") ?: JSONArray()
-                        val list = mutableListOf<DrawingPath>()
-                        for (k in 0 until jPaths.length()) {
-                            val jpath = jPaths.getJSONObject(k)
-                            val wNorm = jpath.optDouble("w", 0.005).toFloat()
-                            val colorInt = jpath.optInt("c", 0xFF000000.toInt())
-                            val isE = jpath.optBoolean("e", false)
-                            val ptsArr = jpath.optJSONArray("pts") ?: JSONArray()
-                            val pts = mutableListOf<Offset>()
-                            for (pIdx in 0 until ptsArr.length()) {
-                                val pair = ptsArr.getJSONArray(pIdx)
-                                pts.add(Offset(pair.optDouble(0, 0.0).toFloat(), pair.optDouble(1, 0.0).toFloat()))
-                            }
-                            list.add(DrawingPath(pts, Color(colorInt), wNorm, isE))
-                        }
-                        loaded[idx] = PageAnnotations(idx, list)
-                    }
-                    withContext(Dispatchers.Main) {
-                        annotations.clear()
-                        annotations.putAll(loaded)
-                    }
-                }
-            }
-        }
-        Log.i(TAG, "📝 Annotations loaded in ${(System.nanoTime() - annotationsStart) / 1_000_000} ms")
-    }
-
-    // ===== onDispose: cancelar renders, guardar y limpiar =====
-    DisposableEffect(holder) {
-        onDispose {
-            // Guardar última página vista
-            runCatching {
-                val prefs = context.getSharedPreferences("reader_state", android.content.Context.MODE_PRIVATE)
-                prefs.edit().putInt("last_page::${file.absolutePath}", listState.firstVisibleItemIndex.coerceAtLeast(0)).apply()
-            }
-
-            // Cancelar renders activos
-            runCatching {
-                inFlightJobs.values.forEach { it.cancel() }
-                inFlightJobs.clear()
-            }
-
-            // Cerrar holder
-            holder.close()
-
-            // Liberar bitmaps
-            scope.launch(Dispatchers.Default) {
-                delay(32)
-                pageBitmaps.forEach { bmp ->
-                    if (bmp != null && !bmp.isRecycled) runCatching { bmp.recycle() }
-                }
-                pageBitmaps.clear()
-            }
-
-            // Guardado final bloqueante
-            runCatching {
-                val pages = JSONArray()
-                annotations.toSortedMap().forEach { (idx, page) ->
-                    val jPaths = JSONArray()
-                    page.paths.forEach { p ->
-                        val pts = JSONArray().also { arr ->
-                            p.points.forEach { o ->
-                                arr.put(JSONArray().put(o.x).put(o.y))
-                            }
-                        }
-                        jPaths.put(
-                            JSONObject()
-                                .put("e", p.isEraser)
-                                .put("c", p.color.toArgb())
-                                .put("w", p.strokeWidth)
-                                .put("pts", pts)
-                        )
-                    }
-                    pages.put(JSONObject().put("index", idx).put("paths", jPaths))
-                }
-                val root = JSONObject().put("version", 1).put("pages", pages)
-                val tmp = File(annFile.parentFile, annFile.name + ".tmp")
-                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
-                if (annFile.exists()) annFile.delete()
-                tmp.renameTo(annFile)
-            }
-
-            Log.i(TAG, "🏁 PdfViewerScreen CLOSED after ${(System.nanoTime() - startTime) / 1_000_000} ms")
-        }
-    }
-}
-
-// ======================================================
-//  ITEMS Y COMPONENTES
-// ======================================================
-
-@Composable
-private fun PdfPageItem(
-    index: Int,
-    bitmap: Bitmap?,
-    showLoadingLabel: Boolean,
-    editMode: Boolean = false,
-    annotations: PageAnnotations = PageAnnotations(index),
-    selectedTool: String = "none",
-    penColor: Color = Color.Red,
-    strokeWidth: Float = 0.006f,
-    smoothingEnabled: Boolean = true,
-    onPathAdded: (DrawingPath) -> Unit = {},
-    onErase: (List<Offset>) -> Unit = {}
-) {
-    var currentPath by remember { mutableStateOf<MutableList<Offset>>(mutableListOf()) }
-    var canvasW by remember { mutableStateOf(0f) }
-    var canvasH by remember { mutableStateOf(0f) }
-
-    fun toNorm(o: Offset): Offset = if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else o
-    fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
-
-    // Función de suavizado (Chaikin's algorithm)
-    fun smoothPath(points: List<Offset>, iterations: Int = 2): List<Offset> {
-        if (points.size < 3) return points
-        var smoothed = points
-        repeat(iterations) {
-            val result = mutableListOf<Offset>()
-            result.add(smoothed.first())
-            for (i in 0 until smoothed.size - 1) {
-                val p0 = smoothed[i]
-                val p1 = smoothed[i + 1]
-                val q = Offset(0.75f * p0.x + 0.25f * p1.x, 0.75f * p0.y + 0.25f * p1.y)
-                val r = Offset(0.25f * p0.x + 0.75f * p1.x, 0.25f * p0.y + 0.75f * p1.y)
-                result.add(q)
-                result.add(r)
-            }
-            result.add(smoothed.last())
-            smoothed = result
-        }
-        return smoothed
-    }
-
-    if (bitmap != null) {
-        Box(modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF303030)) // Fondo gris oscuro para cada página
-            .padding(8.dp) // Padding para crear separación visual
-        ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                    .background(Color.White) // Fondo blanco para la página
-                    .then(
-                        if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
-                            // Solo gestos de dibujo cuando hay herramienta activa
-                            Modifier.pointerInput(selectedTool, penColor, strokeWidth, canvasW, canvasH) {
-                                detectDragGestures(
-                                    onDragStart = { offset ->
-                                        currentPath = mutableListOf(toNorm(offset))
-                                    },
-                                    onDrag = { change, _ ->
-                                        change.consume()
-                                        currentPath = currentPath.toMutableList().apply {
-                                            add(toNorm(change.position))
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        if (currentPath.size > 1) {
-                                            val finalPath = if (smoothingEnabled && selectedTool == "pen") {
-                                                smoothPath(currentPath.toList())
-                                            } else {
-                                                currentPath.toList()
-                                            }
-
-                                            if (selectedTool == "eraser") {
-                                                onErase(finalPath)
-                                            } else {
-                                                onPathAdded(DrawingPath(finalPath, penColor, strokeWidth, false))
-                                            }
-                                        }
-                                        currentPath = mutableListOf()
-                                    }
-                                )
-                            }
-                        } else Modifier
-                    )
-            ) {
-                canvasW = size.width
-                canvasH = size.height
-
-                drawImage(
-                    image = bitmap.asImageBitmap(),
-                    dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
+            // diálogo ajustes afinador
+            if (showTunerSettings) {
+                TunerSettingsDialog(
+                    tuner = tunner,
+                    onDismiss = { showTunerSettings = false }
                 )
-
-                if (editMode) {
-                    annotations.paths.forEach { drawingPath ->
-                        if (drawingPath.points.size > 1) {
-                            val path = Path().apply {
-                                val first = toPx(drawingPath.points.first())
-                                moveTo(first.x, first.y)
-                                drawingPath.points.drop(1).forEach { point ->
-                                    val p = toPx(point)
-                                    lineTo(p.x, p.y)
-                                }
-                            }
-                            drawPath(path = path, color = drawingPath.color, style = Stroke(width = drawingPath.strokeWidth * canvasW))
-                        }
-                    }
-
-                    if (currentPath.size > 1 && selectedTool == "pen") {
-                        val path = Path().apply {
-                            val first = toPx(currentPath.first())
-                            moveTo(first.x, first.y)
-                            currentPath.drop(1).forEach { point ->
-                                val p = toPx(point)
-                                lineTo(p.x, p.y)
-                            }
-                        }
-                        drawPath(path = path, color = penColor, style = Stroke(width = strokeWidth * canvasW))
-                    }
-                }
             }
 
-            if (editMode) {
-                Text(
-                    text = "Página ${index + 1}",
+            // afinador de aguja (debajo del banner)
+            if (showNeedleTuner && tunerOn) {
+                NeedleTunerOverlay(
+                    tunner = tunner,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall
+                        .align(Alignment.TopCenter)
+                        .padding(top = 56.dp)
                 )
-            }
-        }
-    } else {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .background(Color(0xFF1E1E1E)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (showLoadingLabel) {
-                CircularProgressIndicator(color = Color.White.copy(alpha = 0.8f), strokeWidth = 2.dp)
             }
         }
     }
 }
 
-// ======================================================
-//  PDF HOLDER
-// ======================================================
+// ================= utilidades =================
 
+private fun distancePointToSegment(p: Offset, a: Offset, b: Offset): Float {
+    val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
+    val vx = bx - ax; val vy = by - ay
+    val wx = p.x - ax; val wy = p.y - ay
+    val vv = vx * vx + vy * vy
+    val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
+    val nx = ax + t * vx
+    val ny = ay + t * vy
+    val dx = p.x - nx
+    val dy = p.y - ny
+    return kotlin.math.sqrt(dx * dx + dy * dy)
+}
+
+// ===== PDF HOLDER =====
 private class PdfRendererHolder(file: File) {
     private val pfd: ParcelFileDescriptor =
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer: PdfRenderer = PdfRenderer(pfd)
 
-    @Volatile private var closed = false
+    @Volatile
+    private var closed = false
+
     private val renderMutex = Mutex()
 
-    private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
+    // Límite de memoria de la caché (1/6 de la memoria máxima de la app)
+    private val maxKb =
+        (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
+
+    /**
+     * Clave de caché: combinación de (pageIndex, targetWidthClamped)
+     * para distinguir entre previsualización rápida y alta resolución.
+     */
+    private fun cacheKey(pageIndex: Int, targetWidth: Int): Int {
+        val clamped = targetWidth.coerceIn(200, 1920)
+        // pageIndex << 16 deja espacio de sobra para el ancho (hasta 65535)
+        return (pageIndex shl 16) or (clamped and 0xFFFF)
+    }
+
     private val cache = object : LruCache<Int, Bitmap>(maxKb) {
         override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    val pageCount: Int get() = renderer.pageCount
+    val pageCount: Int
+        get() = renderer.pageCount
 
-    // ARGB_8888 por defecto (más compatible con PdfRenderer)
-    suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
-        cache.get(index)?.let { existing -> if (existing.width >= quickTargetW * 0.95f) return existing }
-        return renderInternal(index, quickTargetW, Bitmap.Config.ARGB_8888)
-    }
+    suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? =
+        renderInternal(index, quickTargetW)
 
-    suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
-        cache.get(index)?.let { existing -> if (existing.width >= targetW * 0.95f) return existing }
-        return renderInternal(index, targetW, Bitmap.Config.ARGB_8888)
-    }
+    suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? =
+        renderInternal(index, targetW)
 
-    private suspend fun renderInternal(index: Int, targetW: Int, config: Bitmap.Config): Bitmap? {
-        suspend fun attempt(conf: Bitmap.Config): Bitmap? {
-            if (closed) return null
-            var page: PdfRenderer.Page? = null
-            return try {
-                renderMutex.withLock {
-                    if (closed) return null
-                    if (index !in 0 until renderer.pageCount) return null
-                    page = renderer.openPage(index)
-                    val srcW = page!!.width
-                    val srcH = page!!.height
-                    val scale = (targetW.toFloat() / srcW).coerceIn(0.1f, 8f)
-                    val outW = (srcW * scale).toInt().coerceAtLeast(1)
-                    val outH = (srcH * scale).toInt().coerceAtLeast(1)
-                    val bitmap = Bitmap.createBitmap(outW, outH, conf)
-                    page!!.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    cache.put(index, bitmap)
-                    bitmap
-                }
-            } catch (e: IllegalArgumentException) {
-                Log.w("PDFPERF", "render failed idx=$index w=$targetW with $conf: ${e.message}")
-                null
-            } catch (e: Throwable) {
-                Log.w("PDFPERF", "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}")
-                null
-            } finally {
-                runCatching { page?.close() }
+    private suspend fun renderInternal(index: Int, targetW: Int): Bitmap? {
+        if (closed) return null
+
+        val clampedTargetW = targetW.coerceIn(200, 1920)
+        val key = cacheKey(index, clampedTargetW)
+
+        // 1) Primero mirar en caché: página + ancho
+        cache.get(key)?.let { return it }
+
+        var page: PdfRenderer.Page? = null
+        return try {
+            renderMutex.withLock {
+                if (closed) return null
+                if (index !in 0 until renderer.pageCount) return null
+
+                // Por si otra corrutina ya lo renderizó mientras esperábamos el lock
+                cache.get(key)?.let { return it }
+
+                page = renderer.openPage(index)
+                val srcW = page!!.width
+                val srcH = page!!.height
+
+                val scale = (clampedTargetW.toFloat() / srcW).coerceIn(0.1f, 8f)
+                val outW = (srcW * scale).toInt().coerceAtLeast(1)
+                val outH = (srcH * scale).toInt().coerceAtLeast(1)
+
+                val bitmap = Bitmap.createBitmap(
+                    outW,
+                    outH,
+                    Bitmap.Config.ARGB_8888
+                )
+
+                page!!.render(
+                    bitmap,
+                    null,
+                    null,
+                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                )
+
+                cache.put(key, bitmap)
+                bitmap
             }
+        } catch (e: Throwable) {
+            Log.w(
+                TAG,
+                "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}"
+            )
+            null
+        } finally {
+            runCatching { page?.close() }
         }
-
-        var bmp = attempt(config)
-        if (bmp == null && config != Bitmap.Config.ARGB_8888) {
-            bmp = attempt(Bitmap.Config.ARGB_8888)
-        }
-        return bmp
     }
 
-    fun clearCache() { runCatching { cache.evictAll() } }
+    fun clearCache() {
+        runCatching { cache.evictAll() }
+    }
 
     fun close() {
         if (closed) return
@@ -861,12 +651,173 @@ private class PdfRendererHolder(file: File) {
     }
 }
 
-// ======================================================
-//  BARRA IZQUIERDA (herramientas de edición)
-// ======================================================
 
+// ===== ITEM PÁGINA =====
 @Composable
-private fun LeftToolBar(
+fun PdfPageItem(
+    index: Int,
+    bitmap: Bitmap?,
+    showLoadingLabel: Boolean,
+    editMode: Boolean,
+    annotations: PageAnnotations,
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    smoothingEnabled: Boolean,
+    onPathAdded: (DrawingPath) -> Unit,
+    onErase: (List<Offset>) -> Unit
+) {
+    val currentPath = remember { mutableStateListOf<Offset>() }
+    var canvasW by remember { mutableStateOf(0f) }
+    var canvasH by remember { mutableStateOf(0f) }
+
+    fun toNorm(o: Offset): Offset =
+        if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else o
+
+    fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
+
+    fun smoothPath(points: List<Offset>, iterations: Int = 2): List<Offset> {
+        if (points.size < 3) return points
+        var smoothed = points
+        repeat(iterations) {
+            val result = mutableListOf<Offset>()
+            result.add(smoothed.first())
+            for (i in 0 until smoothed.size - 1) {
+                val p0 = smoothed[i]
+                val p1 = smoothed[i + 1]
+                val q = Offset(
+                    0.75f * p0.x + 0.25f * p1.x,
+                    0.75f * p0.y + 0.25f * p1.y
+                )
+                val r = Offset(
+                    0.25f * p0.x + 0.75f * p1.x,
+                    0.25f * p0.y + 0.75f * p1.y
+                )
+                result.add(q); result.add(r)
+            }
+            result.add(smoothed.last())
+            smoothed = result
+        }
+        return smoothed
+    }
+
+    if (bitmap != null) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF303030))
+                .padding(8.dp)
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                    .background(Color.White)
+                    .then(
+                        if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
+                            Modifier.pointerInput(selectedTool) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        currentPath.clear()
+                                        currentPath.add(toNorm(offset))
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        currentPath.add(toNorm(change.position))
+                                    },
+                                    onDragEnd = {
+                                        if (currentPath.size > 1) {
+                                            val final =
+                                                if (smoothingEnabled && selectedTool == "pen")
+                                                    smoothPath(currentPath.toList())
+                                                else currentPath.toList()
+
+                                            if (selectedTool == "eraser") {
+                                                onErase(final)
+                                            } else {
+                                                onPathAdded(
+                                                    DrawingPath(
+                                                        final,
+                                                        penColor,
+                                                        strokeWidth,
+                                                        false
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        currentPath.clear()
+                                    }
+                                )
+                            }
+                        } else Modifier
+                    )
+            ) {
+                canvasW = size.width; canvasH = size.height
+                drawImage(
+                    bitmap.asImageBitmap(),
+                    dstSize = IntSize(
+                        size.width.roundToInt(),
+                        size.height.roundToInt()
+                    )
+                )
+
+                if (editMode) {
+                    annotations.paths.forEach { p ->
+                        if (p.points.size > 1) {
+                            val path = Path().apply {
+                                val first = toPx(p.points.first())
+                                moveTo(first.x, first.y)
+                                p.points.drop(1).forEach { pt ->
+                                    val pp = toPx(pt)
+                                    lineTo(pp.x, pp.y)
+                                }
+                            }
+                            drawPath(
+                                path = path,
+                                color = p.color,
+                                style = Stroke(width = p.strokeWidth * canvasW)
+                            )
+                        }
+                    }
+                    if (currentPath.size > 1 && selectedTool == "pen") {
+                        val path = Path().apply {
+                            val first = toPx(currentPath.first())
+                            moveTo(first.x, first.y)
+                            currentPath.drop(1).forEach { pt ->
+                                val pp = toPx(pt)
+                                lineTo(pp.x, pp.y)
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = penColor,
+                            style = Stroke(width = strokeWidth * canvasW)
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .background(Color(0xFF1E1E1E)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (showLoadingLabel) {
+                CircularProgressIndicator(
+                    color = Color.White.copy(alpha = 0.8f),
+                    strokeWidth = 2.dp
+                )
+            }
+        }
+    }
+}
+
+// ===== BARRA IZQUIERDA =====
+@Composable
+fun LeftToolBar(
     selectedTool: String,
     penColor: Color,
     strokeWidth: Float,
@@ -889,14 +840,12 @@ private fun LeftToolBar(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Botón de navegación (desactivar herramientas)
             ToolButton(
                 icon = Icons.Default.TouchApp,
                 label = "Navegar",
                 selected = selectedTool == "none",
                 onClick = { onSelectTool("none") }
             )
-
             ToolButton(
                 icon = Icons.Default.Edit,
                 label = "Lápiz",
@@ -911,10 +860,12 @@ private fun LeftToolBar(
             )
 
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.2f), modifier = Modifier.width(48.dp))
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.width(48.dp)
+            )
             Spacer(Modifier.height(8.dp))
 
-            // Selector de color
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = penColor,
@@ -924,8 +875,10 @@ private fun LeftToolBar(
                 shadowElevation = 2.dp
             ) {}
 
-            // Tamaños de trazo
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 8.dp)) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
                 ToolButton(
                     icon = Icons.Default.Remove,
                     label = "Fino",
@@ -946,19 +899,21 @@ private fun LeftToolBar(
                     icon = Icons.Default.DragHandle,
                     label = "Grueso",
                     selected = strokeWidth > 0.008f,
-                    onClick = { onStrokeChange(0.010f) },
+                    onClick = { onStrokeChange(0.01f) },
                     compact = true
                 )
             }
 
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.2f), modifier = Modifier.width(48.dp))
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.width(48.dp)
+            )
             Spacer(Modifier.height(8.dp))
 
-            // Botón de suavizado (afinador)
             ToolButton(
                 icon = Icons.Default.Tune,
-                label = "Afinador",
+                label = "Suavizado",
                 selected = smoothingEnabled,
                 onClick = onToggleSmoothing
             )
@@ -976,7 +931,7 @@ private fun LeftToolBar(
 }
 
 @Composable
-private fun ToolButton(
+fun ToolButton(
     icon: ImageVector,
     label: String,
     selected: Boolean,
@@ -994,25 +949,30 @@ private fun ToolButton(
             .size(size)
             .clickable { onClick() }
     ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
+        Box(
+            Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
+            )
         }
     }
 }
 
-// ======================================================
-//  DIALOGO DE COLOR
-// ======================================================
-
+// ===== DIALOGO DE COLOR =====
 @Composable
-private fun ColorPickerDialog(
+fun ColorPickerDialog(
     currentColor: Color,
     onColorSelected: (Color) -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Seleccionar color") },
+        title = null,
         text = {
             Column {
                 val colors = listOf(
@@ -1020,12 +980,12 @@ private fun ColorPickerDialog(
                     Color.Black, Color.Magenta, Color.Cyan, Color(0xFFFF6B6B),
                     Color(0xFF4ECDC4), Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA)
                 )
-                colors.chunked(4).forEach { rowColors ->
+                colors.chunked(4).forEach { row ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        rowColors.forEach { color ->
+                        row.forEach { color ->
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = color,
@@ -1046,6 +1006,209 @@ private fun ColorPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
+        confirmButton = {
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = null,
+                    tint = Color.White
+                )
+            }
+        }
     )
+}
+
+// ===== MINI WIDGET AFINADOR =====
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TunnerSmall(
+    tunner: AudioTuner,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val state by tunner.tuningState.collectAsState(initial = null)
+
+    val bg = when (val s = state) {
+        null -> Color.DarkGray
+        else -> when {
+            s.isInTune -> Color(0xFF4CAF50)
+            s.centsOff > 10.0 -> Color(0xFFE53935)
+            s.centsOff < -10.0 -> Color(0xFF1E88E5)
+            else -> Color(0xFFFFA000)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongPress
+            )
+            .background(bg, shape = RoundedCornerShape(999.dp))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val note = state?.targetNote ?: "--"
+        Text(
+            note,
+            color = Color.Black,
+            style = MaterialTheme.typography.titleMedium
+        )
+    }
+}
+
+// ===== DIALOGO AJUSTES AFINADOR =====
+@Composable
+fun TunerSettingsDialog(
+    tuner: AudioTuner,
+    onDismiss: () -> Unit
+) {
+    val a4 by tuner.baseFrequency.collectAsState(initial = 442.0)
+    val noisy by tuner.noisyEnvironment.collectAsState(initial = false)
+    var daltonic by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ajustes del afinador") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { tuner.decrementBaseFrequency(1.0) }) {
+                        Icon(Icons.Default.Remove, contentDescription = "Menos")
+                    }
+                    Text(
+                        text = "A4: ${a4.toInt()} Hz",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                    IconButton(onClick = { tuner.incrementBaseFrequency(1.0) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Más")
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = noisy, onCheckedChange = { tuner.setNoisyEnvironment(it) })
+                    Spacer(Modifier.width(4.dp))
+                    Text("Ambiente ruidoso")
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = daltonic, onCheckedChange = { daltonic = it })
+                    Spacer(Modifier.width(4.dp))
+                    Text("Daltonismo (próximamente)")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        }
+    )
+}
+
+// ===== AFINADOR DE AGUJA =====
+@Composable
+fun NeedleTunerOverlay(
+    tunner: AudioTuner,
+    modifier: Modifier = Modifier
+) {
+    val result by tunner.tuningState.collectAsState(initial = null)
+    val cents = (result?.centsOff ?: 0.0).coerceIn(-50.0, 50.0)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(130.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+            tonalElevation = 8.dp,
+            color = Color(0xE0222222),
+            modifier = Modifier
+                .fillMaxWidth(0.45f)
+                .fillMaxHeight()
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val radius = min(w, h) * 0.85f
+                val topMargin = 4.dp.toPx()
+                val center = Offset(w / 2f, radius + topMargin)
+
+                val startAngle = 200f
+                val endAngle = 340f
+                val centerAngle = 270f
+                val sweepLeft = centerAngle - startAngle       // 70
+                val sweepRight = endAngle - centerAngle        // 70
+
+                // arco azul (grave)
+                drawArc(
+                    color = Color(0xFF1E88E5),
+                    startAngle = startAngle,
+                    sweepAngle = sweepLeft,
+                    useCenter = false,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                // arco rojo (agudo)
+                drawArc(
+                    color = Color(0xFFE53935),
+                    startAngle = centerAngle,
+                    sweepAngle = sweepRight,
+                    useCenter = false,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                // triángulo verde zona afinada
+                val innerR = radius * 0.55f
+                val outerR = radius * 0.98f
+                val leftTriAngle = centerAngle - 6f
+                val rightTriAngle = centerAngle + 6f
+
+                fun polar(angleDeg: Float, r: Float): Offset {
+                    val rad = Math.toRadians(angleDeg.toDouble()).toFloat()
+                    return Offset(
+                        center.x + kotlin.math.cos(rad) * r,
+                        center.y + kotlin.math.sin(rad) * r
+                    )
+                }
+
+                val triPath = Path().apply {
+                    moveTo(polar(centerAngle, innerR).x, polar(centerAngle, innerR).y)
+                    lineTo(polar(leftTriAngle, outerR).x, polar(leftTriAngle, outerR).y)
+                    lineTo(polar(rightTriAngle, outerR).x, polar(rightTriAngle, outerR).y)
+                    close()
+                }
+                drawPath(triPath, color = Color(0xFF4CAF50))
+
+                // aguja según los cents (-50..+50)
+                val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
+                val needleAngle = centerAngle + normalized * 45f
+                val needleRad = Math.toRadians(needleAngle.toDouble()).toFloat()
+                val needleLength = radius * 0.9f
+                val end = Offset(
+                    x = center.x + kotlin.math.cos(needleRad) * needleLength,
+                    y = center.y + kotlin.math.sin(needleRad) * needleLength
+                )
+
+                drawLine(
+                    color = Color(0xFFE53935),
+                    start = center,
+                    end = end,
+                    strokeWidth = 4.dp.toPx()
+                )
+            }
+        }
+    }
 }

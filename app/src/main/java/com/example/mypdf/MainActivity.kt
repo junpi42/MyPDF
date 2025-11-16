@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,6 +43,9 @@ import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 
 // PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
 // <<< PERF IMPORTS <<<
@@ -89,11 +93,17 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot() {
     var selectedFile by remember { mutableStateOf<File?>(null) }
 
-    if (selectedFile == null) {
-        LibraryScreen(onOpen = { selectedFile = it })
-    } else {
-        // Abrir siempre la pantalla de edición (que usa visor con edición siempre activa)
-        PdfEditScreen(file = selectedFile!!, onBack = { selectedFile = null })
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets.systemBars,
+    ) { innerPadding ->
+        Box(modifier = Modifier.padding(innerPadding)) {
+            if (selectedFile == null) {
+                LibraryScreen(onOpen = { selectedFile = it })
+            } else {
+                PdfEditScreen(file = selectedFile!!, onBack = { selectedFile = null })
+            }
+        }
     }
 }
 
@@ -115,55 +125,95 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
     var sortOption by rememberSaveable { mutableStateOf(SortOption.BY_DATE) }
     var sortAsc by rememberSaveable { mutableStateOf(false) }
 
-    // Estado para crear nueva categoría (diálogo)
-    var showCategoryDialog by remember { mutableStateOf(false) }
-    var categoryName by remember { mutableStateOf("") }
-    // Estados para panel derecho (gestión de carpetas)
+    var showNewCategoryDialog by remember { mutableStateOf(false) }
+    var newCategoryName by remember { mutableStateOf("") }
+    var showNewFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
-    var folderToDelete by remember { mutableStateOf<File?>(null) }
+    var fabMenuExpanded by remember { mutableStateOf(false) }
 
-    // ------- Timings integrados -------
+    // nuevo estado para acciones de long-press
+    var fileToEdit by remember { mutableStateOf<File?>(null) }
+    var isDirTarget by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
+
+    val configuration = LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp
+    val isTablet = screenWidthDp >= 900
+    val isLargePhone = screenWidthDp in 600..899
+
+    val sidebarWidth = when {
+        isTablet -> 280.dp
+        isLargePhone -> 200.dp
+        else -> 96.dp
+    }
+
+    val gridMinCell = when {
+        isTablet -> 260.dp
+        isLargePhone -> 200.dp
+        else -> 150.dp
+    }
+
+    val folderIconTextStyle = when {
+        isTablet -> MaterialTheme.typography.displaySmall
+        isLargePhone -> MaterialTheme.typography.headlineLarge
+        else -> MaterialTheme.typography.headlineMedium
+    }
+
+    val thumbHeight = when {
+        isTablet -> 180.dp
+        isLargePhone -> 130.dp
+        else -> 90.dp
+    }
+
+    suspend fun ensureDefaultCategory(): File {
+        val (rootDirs, _) = listLibraryFolder(context, "")
+        val default = rootDirs.firstOrNull { it.name == "default" }
+        if (default != null) return default
+        return createLibraryFolder(context, "", "default") ?: appPdfDir(context)
+    }
+
     suspend fun refreshCategories() {
         loading = true
-        val pair = Perf.timeIO("listLibrary:root") { listLibraryFolder(context, "") }
-        val (rootDirs, _) = pair
-        categories = Perf.time("sort:cats") { rootDirs.sortedBy { it.name.lowercase() } }
-        if (selectedCategory?.exists() != true) selectedCategory = categories.firstOrNull()
+        val (rootDirs, _) = withContext(Dispatchers.IO) { listLibraryFolder(context, "") }
+        val cats = rootDirs.sortedBy { it.name.lowercase() }
+        categories = cats
+        val effectiveSelected = if (selectedCategory?.exists() == true && cats.contains(selectedCategory)) {
+            selectedCategory
+        } else {
+            cats.firstOrNull() ?: ensureDefaultCategory().also { created ->
+                categories = (cats + created).sortedBy { it.name.lowercase() }
+            }
+        }
+        selectedCategory = effectiveSelected
         loading = false
     }
 
     suspend fun loadCategory(cat: File?) {
         loading = true
-        if (cat == null) { folders = emptyList(); pdfs = emptyList(); loading = false; return }
+        if (cat == null) {
+            folders = emptyList(); pdfs = emptyList(); loading = false; return
+        }
         val base = appPdfDir(context)
         val relPath = runCatching { cat.relativeTo(base).path.replace(File.separatorChar, '/') }
             .getOrElse { cat.name }
-
-        val (fList, pList) = Perf.timeIO("listLibrary:$relPath") { listLibraryFolder(context, relPath) }
-        folders = Perf.time("sort:folders") { fList.sortedBy { it.name.lowercase() } }
+        val (fList, pList) = withContext(Dispatchers.IO) { listLibraryFolder(context, relPath) }
+        folders = fList.sortedBy { it.name.lowercase() }
         pdfs = pList
-
-        Perf.timeIO("thumbs:batch:$relPath") {
-            pList.forEach { f ->
-                if (!thumbs.containsKey(f)) {
-                    thumbs[f] = Perf.timeIO("thumb:gen:${f.name}") { generatePdfThumbnailCached(context, f) }
-                }
-            }
+        withContext(Dispatchers.IO) {
+            pList.forEach { f -> if (!thumbs.containsKey(f)) thumbs[f] = generatePdfThumbnailCached(context, f) }
         }
         loading = false
-        // Dump opcional de resumen tras cargar categoría
-        Perf.dumpSummary()
     }
 
     suspend fun searchEverywhere(text: String) {
         if (text.isBlank()) { globalResults = emptyList(); return }
         searching = true
-
-        val results = Perf.timeIO("search:walk") {
+        val results = withContext(Dispatchers.IO) {
             fun walk(dir: File, acc: MutableList<File>) {
                 dir.listFiles()?.forEach { f ->
-                    if (f.isDirectory) walk(f, acc)
-                    else if (f.extension.equals("pdf", true)) acc += f
+                    if (f.isDirectory) walk(f, acc) else if (f.extension.equals("pdf", true)) acc += f
                 }
             }
             val (rootDirs, rootPdfs) = listLibraryFolder(context, "")
@@ -172,15 +222,10 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
             rootDirs.forEach { walk(it, all) }
             all.filter { it.name.contains(text, ignoreCase = true) }
         }
-
-        Perf.timeIO("thumbs:searchBatch") {
-            results.forEach {
-                if (!thumbs.containsKey(it)) {
-                    thumbs[it] = generatePdfThumbnailCached(context, it)
-                }
-            }
+        withContext(Dispatchers.IO) {
+            results.forEach { f -> if (!thumbs.containsKey(f)) thumbs[f] = generatePdfThumbnailCached(context, f) }
         }
-        globalResults = Perf.time("search:assign") { results }
+        globalResults = results
         searching = false
     }
 
@@ -190,19 +235,9 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
             SortOption.BY_DATE -> compareBy<File> { it.lastModified() }
             SortOption.BY_SIZE -> compareBy<File> { it.length() }
         }
-        val base = Perf.time("sort:files:$sortOption") { list.sortedWith(comp) }
+        val base = list.sortedWith(comp)
         return if (sortAsc) base else base.asReversed()
     }
-
-    fun countFilesRecursive(dir: File): Int = Perf.time("count:${dir.name}") {
-        var count = 0
-        dir.listFiles()?.forEach {
-            if (it.isDirectory) count += countFilesRecursive(it)
-            else if (it.extension.equals("pdf", true)) count++
-        }
-        count
-    }
-    // ------- Fin timings integrados -------
 
     LaunchedEffect(Unit) { refreshCategories() }
     LaunchedEffect(selectedCategory) { loadCategory(selectedCategory) }
@@ -218,205 +253,418 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
                 val base = appPdfDir(context)
                 val relPath = selectedCategory?.let { sel ->
                     runCatching { sel.relativeTo(base).path.replace(File.separatorChar, '/') }.getOrElse { sel.name }
-                } ?: ""
-                val newFile = Perf.timeIO("import:clone:$relPath") { clonePdfIntoApp(context, uri, relPath) }
+                } ?: "default"
+                val effectiveRel = if (relPath.isBlank()) "default" else relPath
+                val newFile = withContext(Dispatchers.IO) { clonePdfIntoApp(context, uri, effectiveRel) }
                 withContext(Dispatchers.IO) {
-                    thumbs[newFile] = Perf.timeIO("thumb:gen:${newFile.name}") { generatePdfThumbnailCached(context, newFile) }
+                    thumbs[newFile] = generatePdfThumbnailCached(context, newFile)
+                }
+                refreshCategories()
+                selectedCategory = ensureDefaultCategory().let { def ->
+                    if (effectiveRel == "default") def else File(def.parentFile, effectiveRel)
                 }
                 loadCategory(selectedCategory)
                 Toast.makeText(context, "PDF importado ✓", Toast.LENGTH_SHORT).show()
                 loading = false
-                // Resumen tras importar
-                Perf.dumpSummary()
             }
         }
     )
 
-    // Reemplazamos BoxWithConstraints por LocalConfiguration para detectar ancho
-    val configuration = LocalConfiguration.current
-    val isCompact = configuration.screenWidthDp < 800
-    val sidebarWidth = if (!isCompact) 260.dp else 72.dp
-
-    // Layout principal: barra izquierda siempre visible, centro amplio, panel derecho opcional
-    Row(Modifier.fillMaxSize()) {
-        // Barra izquierda (siempre visible): compacta en móviles
-        Surface(
-            tonalElevation = 1.dp,
-            modifier = Modifier.width(sidebarWidth).fillMaxHeight()
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                Text(
-                    "Categories",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
-                )
-                LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                    items(categories) { cat ->
-                        val selected = cat == selectedCategory
-                        CategoryItem(
-                            name = cat.name,
-                            count = remember(cat) { countFilesRecursive(cat) },
-                            selected = selected,
-                            onClick = { selectedCategory = cat }
-                        )
+    Box(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize()) {
+            Surface(
+                tonalElevation = 3.dp,
+                modifier = Modifier.width(sidebarWidth).fillMaxHeight()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Categorías", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(8.dp))
+                    Spacer(Modifier.height(4.dp))
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(categories) { cat ->
+                            val selected = cat == selectedCategory
+                            Surface(
+                                shape = MaterialTheme.shapes.large,
+                                tonalElevation = if (selected) 6.dp else 0.dp,
+                                modifier = Modifier
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .fillMaxWidth()
+                                    .clickable { selectedCategory = cat }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(if (selected) "📚" else "📁", style = folderIconTextStyle)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(cat.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                    TextButton(onClick = { showNewCategoryDialog = true }, modifier = Modifier.padding(8.dp)) {
+                        Text("+ categoría")
                     }
                 }
-                Box(Modifier.fillMaxWidth()) {
-                    FloatingActionButton(onClick = { showCategoryDialog = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text("➕") }
-                }
             }
-        }
 
-        VerticalDivider()
+            VerticalDivider()
 
-        // Contenido central
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            Text(
-                "PDF Library Manager",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
-            )
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    placeholder = { Text("Search PDFs by name…") },
-                    leadingIcon = { Text("🔍") },
-                    shape = MaterialTheme.shapes.large
-                )
-                Spacer(Modifier.width(12.dp))
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    tonalElevation = 2.dp,
-                    modifier = Modifier.height(40.dp)
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Sort: " + when (sortOption) {
-                            SortOption.BY_NAME -> "Name"
-                            SortOption.BY_DATE -> "Date"
-                            SortOption.BY_SIZE -> "Size"
-                        })
-                        Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Buscar en biblioteca") }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = {
                             sortOption = when (sortOption) {
                                 SortOption.BY_NAME -> SortOption.BY_DATE
                                 SortOption.BY_DATE -> SortOption.BY_SIZE
                                 SortOption.BY_SIZE -> SortOption.BY_NAME
                             }
-                        }) { Text("Change") }
-                        IconButton(onClick = { sortAsc = !sortAsc }) { Text(if (sortAsc) "↑" else "↓") }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
-            val showFolders = if (query.isNotBlank()) emptyList<File>() else folders
-
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when {
-                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    showFiles.isEmpty() && showFolders.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (searching) "Searching…" else "No items yet.") }
-                    else -> LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = if (isCompact) 160.dp else 280.dp),
-                        modifier = Modifier.fillMaxSize().padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        contentPadding = PaddingValues(bottom = 96.dp)
-                    ) {
-                        items(showFolders.size) { i ->
-                            val dir = showFolders[i]
-                            Surface(
-                                tonalElevation = 1.dp,
-                                shape = MaterialTheme.shapes.large,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(if (isCompact) 160.dp else 220.dp)
-                                    .clickable { selectedCategory = dir }
-                            ) {
-                                Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("📁", style = MaterialTheme.typography.headlineLarge) }
-                                    Surface(tonalElevation = 0.dp, modifier = Modifier.fillMaxWidth()) {
-                                        Column(Modifier.padding(12.dp)) {
-                                            Text(dir.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
-                                            Text("${countFilesRecursive(dir)} files", style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    }
+                        }) {
+                            Text(
+                                when (sortOption) {
+                                    SortOption.BY_NAME -> "Nombre"
+                                    SortOption.BY_DATE -> "Fecha"
+                                    SortOption.BY_SIZE -> "Tamaño"
                                 }
-                            }
-                        }
-
-                        items(showFiles.size) { i ->
-                            val f = showFiles[i]
-                            val bmp = thumbs[f]
-                            PdfCard(
-                                name = f.nameWithoutExtension,
-                                sizeText = formatBytes(f.length()),
-                                dateText = formatRelativeDate(f.lastModified()),
-                                thumbnail = bmp,
-                                onClick = { onOpen(f) }
                             )
                         }
+                        IconButton(onClick = { sortAsc = !sortAsc }) {
+                            Text(if (sortAsc) "↑" else "↓")
+                        }
                     }
                 }
 
-                FloatingActionButton(onClick = { picker.launch(arrayOf("application/pdf")) }, modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)) { Text("⤴") }
-            }
-        }
+                val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
+                val showFolders = if (query.isNotBlank()) emptyList<File>() else folders
 
-        // Panel derecho solo en pantallas grandes
-        if (!isCompact) {
-            VerticalDivider()
-            Surface(tonalElevation = 1.dp, modifier = Modifier.width(260.dp).fillMaxHeight()) {
-                Column(Modifier.fillMaxSize()) {
-                    Text("Folders", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
-                    if (folders.isEmpty()) {
-                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("No folders") }
-                    } else {
-                        LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                            items(folders) { dir ->
-                                Row(Modifier.fillMaxWidth().clickable { selectedCategory = dir }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(dir.name, style = MaterialTheme.typography.bodyMedium)
-                                        Text("${countFilesRecursive(dir)} files", style = MaterialTheme.typography.labelSmall)
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+
+                        showFiles.isEmpty() && showFolders.isEmpty() -> Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (searching) "Buscando…" else "Sin elementos")
+                        }
+
+                        else -> LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = gridMinCell),
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(bottom = 96.dp, top = 4.dp)
+                        ) {
+                            items(showFolders.size) { i ->
+                                val dir = showFolders[i]
+                                Surface(
+                                    tonalElevation = 2.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(if (isTablet) 0.9f else 1.0f)
+                                        .combinedClickable(
+                                            onClick = { selectedCategory = dir },
+                                            onLongClick = {
+                                                fileToEdit = dir
+                                                isDirTarget = true
+                                                renameText = dir.name
+                                                showRenameDialog = true
+                                            }
+                                        )
+                                ) {
+                                    Column(
+                                        Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("📁", style = folderIconTextStyle)
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(dir.name, maxLines = 2, style = MaterialTheme.typography.titleMedium)
                                     }
-                                    IconButton(onClick = { folderToDelete = dir }) { Text("🗑") }
+                                }
+                            }
+                            items(showFiles.size) { i ->
+                                val f = showFiles[i]
+                                val bmp = thumbs[f]
+                                Surface(
+                                    tonalElevation = 2.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(if (isTablet) 0.9f else 1.0f)
+                                        .combinedClickable(
+                                            onClick = { onOpen(f) },
+                                            onLongClick = {
+                                                fileToEdit = f
+                                                isDirTarget = false
+                                                renameText = f.nameWithoutExtension
+                                                showRenameDialog = true
+                                            }
+                                        )
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        if (bmp != null) {
+                                            Image(
+                                                bmp.asImageBitmap(),
+                                                null,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(thumbHeight)
+                                            )
+                                        } else {
+                                            Text("📄", style = folderIconTextStyle)
+                                        }
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            text = f.nameWithoutExtension,
+                                            maxLines = 2,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = "${f.length() / 1024} KB",
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
 
-                    Column(Modifier.padding(12.dp)) {
-                        OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("New folder") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = {
-                                if (newFolderName.isNotBlank()) {
-                                    scope.launch {
-                                        val base = selectedCategory ?: appPdfDir(context)
-                                        val candidate = File(base, newFolderName)
-                                        val ok = withContext(Dispatchers.IO) { candidate.mkdir() }
-                                        if (ok) {
-                                            loadCategory(selectedCategory)
-                                            newFolderName = ""
-                                        } else {
-                                            Toast.makeText(context, "No se pudo crear carpeta", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            }) { Text("Create") }
-                        }
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+            ) {
+                Box {
+                    FloatingActionButton(onClick = { fabMenuExpanded = true }) {
+                        Text("+")
+                    }
+                    DropdownMenu(
+                        expanded = fabMenuExpanded,
+                        onDismissRequest = { fabMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Importar PDF") },
+                            onClick = {
+                                fabMenuExpanded = false
+                                picker.launch(arrayOf("application/pdf"))
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Crear carpeta") },
+                            onClick = {
+                                fabMenuExpanded = false
+                                showNewFolderDialog = true
+                            }
+                        )
                     }
                 }
             }
         }
-    }
-    // fin layout principal
-}
 
+        if (showNewCategoryDialog) {
+            AlertDialog(
+                onDismissRequest = { showNewCategoryDialog = false },
+                title = { Text("Nueva categoría") },
+                text = {
+                    OutlinedTextField(
+                        value = newCategoryName,
+                        onValueChange = { newCategoryName = it },
+                        singleLine = true,
+                        label = { Text("Nombre") }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (newCategoryName.isNotBlank()) {
+                            scope.launch {
+                                val created = createLibraryFolder(context, "", newCategoryName)
+                                if (created != null) {
+                                    refreshCategories()
+                                    selectedCategory = created
+                                } else {
+                                    Toast.makeText(context, "No se pudo crear la categoría", Toast.LENGTH_SHORT).show()
+                                }
+                                showNewCategoryDialog = false
+                                newCategoryName = ""
+                            }
+                        }
+                    }) {
+                        Text("Crear")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showNewCategoryDialog = false
+                        newCategoryName = ""
+                    }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
+
+        if (showNewFolderDialog) {
+            AlertDialog(
+                onDismissRequest = { showNewFolderDialog = false },
+                title = { Text("Nueva carpeta") },
+                text = {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        singleLine = true,
+                        label = { Text("Nombre carpeta") }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (newFolderName.isNotBlank()) {
+                            scope.launch {
+                                val base = selectedCategory ?: ensureDefaultCategory()
+                                val candidate = File(base, newFolderName)
+                                val ok = withContext(Dispatchers.IO) { candidate.mkdir() }
+                                if (ok) {
+                                    loadCategory(selectedCategory)
+                                    newFolderName = ""
+                                } else {
+                                    Toast.makeText(context, "No se pudo crear carpeta", Toast.LENGTH_SHORT).show()
+                                }
+                                showNewFolderDialog = false
+                            }
+                        }
+                    }) {
+                        Text("Crear")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showNewFolderDialog = false
+                        newFolderName = ""
+                    }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
+
+        if (showRenameDialog && fileToEdit != null) {
+            AlertDialog(
+                onDismissRequest = { showRenameDialog = false },
+                title = { Text("Renombrar") },
+                text = {
+                    Column {
+                        OutlinedTextField(
+                            value = renameText,
+                            onValueChange = { renameText = it },
+                            singleLine = true,
+                            label = { Text("Nuevo nombre") }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { showDeleteDialog = true }) {
+                            Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val target = fileToEdit ?: return@TextButton
+                        val newNameClean = renameText.trim()
+                        if (newNameClean.isNotBlank()) {
+                            scope.launch(Dispatchers.IO) {
+                                val parent = target.parentFile
+                                if (parent != null) {
+                                    val ext = if (!isDirTarget && target.extension.isNotEmpty()) ".${target.extension}" else ""
+                                    val newFile = File(parent, newNameClean + ext)
+                                    val ok = target.renameTo(newFile)
+                                    withContext(Dispatchers.Main) {
+                                        if (ok) {
+                                            if (!isDirTarget) {
+                                                thumbs.remove(target)
+                                            }
+                                            showRenameDialog = false
+                                            fileToEdit = null
+                                            loadCategory(selectedCategory)
+                                        } else {
+                                            Toast.makeText(context, "No se pudo renombrar", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }) {
+                        Text("Guardar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showRenameDialog = false
+                        fileToEdit = null
+                    }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
+
+        if (showDeleteDialog && fileToEdit != null) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false },
+                title = { Text("Eliminar") },
+                text = {
+                    Text("¿Seguro que quieres eliminar ${(if (isDirTarget) "la carpeta" else "el PDF")}? Esta acción no se puede deshacer.")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val target = fileToEdit ?: return@TextButton
+                        scope.launch(Dispatchers.IO) {
+                            fun deleteRecursively(f: File) {
+                                if (f.isDirectory) {
+                                    f.listFiles()?.forEach { deleteRecursively(it) }
+                                }
+                                f.delete()
+                            }
+                            deleteRecursively(target)
+                            withContext(Dispatchers.Main) {
+                                if (!isDirTarget) {
+                                    thumbs.remove(target)
+                                }
+                                showDeleteDialog = false
+                                showRenameDialog = false
+                                fileToEdit = null
+                                loadCategory(selectedCategory)
+                            }
+                        }
+                    }) {
+                        Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = false }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
+    }
+}
 // ====== UI helpers que podrían haberse perdido ======
 @Composable
 private fun CategoryItem(name: String, count: Int, selected: Boolean, onClick: () -> Unit) {
