@@ -17,7 +17,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -751,58 +753,63 @@ fun PdfPageItem(
                                 canvasW,
                                 canvasH
                             ) {
-                                // Modo ultra sensible: añadimos todos los puntos
-                                detectDragGestures(
-                                    onDragStart = { offset ->
-                                        if (canvasW <= 0f || canvasH <= 0f) return@detectDragGestures
-                                        currentPath.clear()
-                                        currentPath.add(toNorm(offset))
-                                    },
-                                    onDrag = { change, _ ->
-                                        if (canvasW <= 0f || canvasH <= 0f) return@detectDragGestures
+                                awaitEachGesture {
+                                    if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
+
+                                    currentPath.clear()
+
+                                    // down inicial
+                                    val down = awaitFirstDown()
+                                    currentPath.add(toNorm(down.position))
+
+                                    // marcamos si ha habido movimiento “real”
+                                    var moved = false
+
+                                    // arrastre sin usar touch slop de alto nivel
+                                    drag(down.id) { change ->
+                                        moved = true
                                         change.consume()
                                         val pos = change.position
                                         currentPath.add(toNorm(pos))
-                                    },
-                                    onDragEnd = {
-                                        if (currentPath.isNotEmpty()) {
-                                            val basePoints = if (currentPath.size == 1) {
-                                                val p = currentPath.first()
-                                                listOf(
-                                                    p,
-                                                    Offset(p.x + 0.001f, p.y + 0.001f)
-                                                )
-                                            } else {
-                                                currentPath.toList()
-                                            }
-
-                                            val tiny = isTinyStroke(basePoints)
-                                            val final =
-                                                if (smoothingEnabled && selectedTool == "pen" && !tiny) {
-                                                    smoothPath(basePoints, iterations = 1)
-                                                } else {
-                                                    basePoints
-                                                }
-
-                                            if (selectedTool == "eraser") {
-                                                onErase(final)
-                                            } else {
-                                                onPathAdded(
-                                                    DrawingPath(
-                                                        final,
-                                                        penColor,
-                                                        strokeWidth,
-                                                        isEraser = false
-                                                    )
-                                                )
-                                            }
-                                        }
-                                        currentPath.clear()
-                                    },
-                                    onDragCancel = {
-                                        currentPath.clear()
                                     }
-                                )
+
+                                    // Gesto terminado (con o sin movimiento)
+                                    if (currentPath.isNotEmpty()) {
+                                        val basePoints = if (currentPath.size == 1) {
+                                            // solo un punto → mini segmento visible
+                                            val p = currentPath.first()
+                                            listOf(
+                                                p,
+                                                Offset(p.x + 0.01f, p.y + 0.01f)
+                                            )
+                                        } else {
+                                            currentPath.toList()
+                                        }
+
+                                        val tiny = isTinyStroke(basePoints)
+                                        val final =
+                                            if (smoothingEnabled && selectedTool == "pen" && !tiny) {
+                                                smoothPath(basePoints, iterations = 1)
+                                            } else {
+                                                basePoints
+                                            }
+
+                                        if (selectedTool == "eraser") {
+                                            onErase(final)
+                                        } else {
+                                            onPathAdded(
+                                                DrawingPath(
+                                                    final,
+                                                    penColor,
+                                                    strokeWidth,
+                                                    isEraser = false
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    currentPath.clear()
+                                }
                             }
                         } else {
                             Modifier
