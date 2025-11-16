@@ -1,5 +1,6 @@
 package com.example.mypdf
 
+import androidx.compose.ui.layout.onSizeChanged
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
@@ -651,8 +652,8 @@ private class PdfRendererHolder(file: File) {
     }
 }
 
-
 // ===== ITEM PÁGINA =====
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfPageItem(
     index: Int,
@@ -672,11 +673,12 @@ fun PdfPageItem(
     var canvasH by remember { mutableStateOf(0f) }
 
     fun toNorm(o: Offset): Offset =
-        if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else o
+        if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
 
     fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
 
-    fun smoothPath(points: List<Offset>, iterations: Int = 2): List<Offset> {
+    // Suavizado sencillo tipo Chaikin
+    fun smoothPath(points: List<Offset>, iterations: Int = 1): List<Offset> {
         if (points.size < 3) return points
         var smoothed = points
         repeat(iterations) {
@@ -701,6 +703,29 @@ fun PdfPageItem(
         return smoothed
     }
 
+    // Detectar si es un trazo muy pequeño (detalle/letra)
+    fun isTinyStroke(points: List<Offset>): Boolean {
+        if (points.isEmpty()) return true
+        var minX = points[0].x
+        var maxX = points[0].x
+        var minY = points[0].y
+        var maxY = points[0].y
+
+        for (i in 1 until points.size) {
+            val p = points[i]
+            if (p.x < minX) minX = p.x
+            if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.y > maxY) maxY = p.y
+        }
+
+        val width = maxX - minX
+        val height = maxY - minY
+
+        // menos del 3% del lienzo en ambas direcciones: muy pequeño
+        return width < 0.03f && height < 0.03f
+    }
+
     if (bitmap != null) {
         Box(
             Modifier
@@ -713,24 +738,51 @@ fun PdfPageItem(
                     .fillMaxWidth()
                     .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
                     .background(Color.White)
+                    .onSizeChanged { newSize ->
+                        canvasW = newSize.width.toFloat()
+                        canvasH = newSize.height.toFloat()
+                    }
                     .then(
                         if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
-                            Modifier.pointerInput(selectedTool) {
+                            Modifier.pointerInput(
+                                selectedTool,
+                                smoothingEnabled,
+                                strokeWidth,
+                                canvasW,
+                                canvasH
+                            ) {
+                                // Modo ultra sensible: añadimos todos los puntos
                                 detectDragGestures(
                                     onDragStart = { offset ->
+                                        if (canvasW <= 0f || canvasH <= 0f) return@detectDragGestures
                                         currentPath.clear()
                                         currentPath.add(toNorm(offset))
                                     },
                                     onDrag = { change, _ ->
+                                        if (canvasW <= 0f || canvasH <= 0f) return@detectDragGestures
                                         change.consume()
-                                        currentPath.add(toNorm(change.position))
+                                        val pos = change.position
+                                        currentPath.add(toNorm(pos))
                                     },
                                     onDragEnd = {
-                                        if (currentPath.size > 1) {
+                                        if (currentPath.isNotEmpty()) {
+                                            val basePoints = if (currentPath.size == 1) {
+                                                val p = currentPath.first()
+                                                listOf(
+                                                    p,
+                                                    Offset(p.x + 0.001f, p.y + 0.001f)
+                                                )
+                                            } else {
+                                                currentPath.toList()
+                                            }
+
+                                            val tiny = isTinyStroke(basePoints)
                                             val final =
-                                                if (smoothingEnabled && selectedTool == "pen")
-                                                    smoothPath(currentPath.toList())
-                                                else currentPath.toList()
+                                                if (smoothingEnabled && selectedTool == "pen" && !tiny) {
+                                                    smoothPath(basePoints, iterations = 1)
+                                                } else {
+                                                    basePoints
+                                                }
 
                                             if (selectedTool == "eraser") {
                                                 onErase(final)
@@ -740,19 +792,24 @@ fun PdfPageItem(
                                                         final,
                                                         penColor,
                                                         strokeWidth,
-                                                        false
+                                                        isEraser = false
                                                     )
                                                 )
                                             }
                                         }
                                         currentPath.clear()
+                                    },
+                                    onDragCancel = {
+                                        currentPath.clear()
                                     }
                                 )
                             }
-                        } else Modifier
+                        } else {
+                            Modifier
+                        }
                     )
             ) {
-                canvasW = size.width; canvasH = size.height
+                // Fondo: la página del PDF
                 drawImage(
                     bitmap.asImageBitmap(),
                     dstSize = IntSize(
@@ -762,37 +819,60 @@ fun PdfPageItem(
                 )
 
                 if (editMode) {
+                    // Paths guardados
                     annotations.paths.forEach { p ->
-                        if (p.points.size > 1) {
+                        when {
+                            p.points.size > 1 -> {
+                                val path = Path().apply {
+                                    val first = toPx(p.points.first())
+                                    moveTo(first.x, first.y)
+                                    p.points.drop(1).forEach { pt ->
+                                        val pp = toPx(pt)
+                                        lineTo(pp.x, pp.y)
+                                    }
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = p.color,
+                                    style = Stroke(width = p.strokeWidth * size.width)
+                                )
+                            }
+
+                            p.points.size == 1 -> {
+                                val pp = toPx(p.points.first())
+                                drawCircle(
+                                    color = p.color,
+                                    radius = (p.strokeWidth * size.width) / 2f,
+                                    center = pp
+                                )
+                            }
+                        }
+                    }
+
+                    // Path en vivo
+                    if (selectedTool == "pen" && currentPath.isNotEmpty()) {
+                        if (currentPath.size > 1) {
                             val path = Path().apply {
-                                val first = toPx(p.points.first())
+                                val first = toPx(currentPath.first())
                                 moveTo(first.x, first.y)
-                                p.points.drop(1).forEach { pt ->
+                                currentPath.drop(1).forEach { pt ->
                                     val pp = toPx(pt)
                                     lineTo(pp.x, pp.y)
                                 }
                             }
                             drawPath(
                                 path = path,
-                                color = p.color,
-                                style = Stroke(width = p.strokeWidth * canvasW)
+                                color = penColor,
+                                style = Stroke(width = strokeWidth * size.width)
+                            )
+                        } else {
+                            val pp = toPx(currentPath.first())
+                            drawCircle(
+                                color = penColor,
+                                radius = (strokeWidth * size.width) / 2f,
+                                center = pp
                             )
                         }
-                    }
-                    if (currentPath.size > 1 && selectedTool == "pen") {
-                        val path = Path().apply {
-                            val first = toPx(currentPath.first())
-                            moveTo(first.x, first.y)
-                            currentPath.drop(1).forEach { pt ->
-                                val pp = toPx(pt)
-                                lineTo(pp.x, pp.y)
-                            }
-                        }
-                        drawPath(
-                            path = path,
-                            color = penColor,
-                            style = Stroke(width = strokeWidth * canvasW)
-                        )
                     }
                 }
             }
@@ -890,7 +970,7 @@ fun LeftToolBar(
                 ToolButton(
                     icon = Icons.Default.HorizontalRule,
                     label = "Medio",
-                    selected = strokeWidth in 0.005f..0.008f,
+                    selected = strokeWidth >= 0.005f && strokeWidth <= 0.008f,
                     onClick = { onStrokeChange(0.006f) },
                     compact = true
                 )
