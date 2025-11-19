@@ -1,14 +1,13 @@
 package com.example.mypdf
 
-import androidx.compose.ui.layout.onSizeChanged
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
-import android.util.LruCache
 import android.util.Log
+import android.util.LruCache
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -19,8 +18,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -30,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.key
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
@@ -106,12 +107,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            tunerOn = true
-        } else {
-            tunerOn = false
-            runCatching { tunner.stopTuning(clearState = false) }
-        }
+        tunerOn = granted
+        if (!granted) runCatching { tunner.stopTuning(clearState = false) }
     }
 
     fun ensureMicPermission(onGranted: () -> Unit) {
@@ -383,9 +380,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                         val a = pts[i]; val b = pts[i + 1]
                                         if (eraserPoints.any { e ->
                                                 distancePointToSegment(
-                                                    e,
-                                                    a,
-                                                    b
+                                                    e, a, b
                                                 ) <= (strokeWidth * 100)
                                             }
                                         ) {
@@ -408,7 +403,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
 
             // ===== barra superior (sin título, solo iconos) =====
             TopAppBar(
-                title = {}, // el título lo ocupamos con el banner flotante
+                title = {},
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -470,19 +465,17 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     .border(1.dp, Color.Black)
             )
 
-            // ===== banner pequeño del afinador, centrado y grande =====
+            // ===== banner pequeño del afinador =====
             if (tunerOn) {
                 TunnerSmall(
                     tunner = tunner,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = (topBarHeight - 44.dp) / 2) // centrado vertical en la barra
+                        .padding(top = (topBarHeight - 44.dp) / 2)
                         .fillMaxWidth(0.7f)
                         .height(44.dp),
                     onClick = { showTunerSettings = true },
-                    onLongPress = {
-                        showNeedleTuner = !showNeedleTuner
-                    }
+                    onLongPress = { showNeedleTuner = !showNeedleTuner }
                 )
             }
 
@@ -556,22 +549,15 @@ private class PdfRendererHolder(file: File) {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer: PdfRenderer = PdfRenderer(pfd)
 
-    @Volatile
-    private var closed = false
-
+    @Volatile private var closed = false
     private val renderMutex = Mutex()
 
     // Límite de memoria de la caché (1/6 de la memoria máxima de la app)
     private val maxKb =
         (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
 
-    /**
-     * Clave de caché: combinación de (pageIndex, targetWidthClamped)
-     * para distinguir entre previsualización rápida y alta resolución.
-     */
     private fun cacheKey(pageIndex: Int, targetWidth: Int): Int {
         val clamped = targetWidth.coerceIn(200, 1920)
-        // pageIndex << 16 deja espacio de sobra para el ancho (hasta 65535)
         return (pageIndex shl 16) or (clamped and 0xFFFF)
     }
 
@@ -579,8 +565,7 @@ private class PdfRendererHolder(file: File) {
         override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    val pageCount: Int
-        get() = renderer.pageCount
+    val pageCount: Int get() = renderer.pageCount
 
     suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? =
         renderInternal(index, quickTargetW)
@@ -594,7 +579,6 @@ private class PdfRendererHolder(file: File) {
         val clampedTargetW = targetW.coerceIn(200, 1920)
         val key = cacheKey(index, clampedTargetW)
 
-        // 1) Primero mirar en caché: página + ancho
         cache.get(key)?.let { return it }
 
         var page: PdfRenderer.Page? = null
@@ -603,7 +587,6 @@ private class PdfRendererHolder(file: File) {
                 if (closed) return null
                 if (index !in 0 until renderer.pageCount) return null
 
-                // Por si otra corrutina ya lo renderizó mientras esperábamos el lock
                 cache.get(key)?.let { return it }
 
                 page = renderer.openPage(index)
@@ -614,11 +597,7 @@ private class PdfRendererHolder(file: File) {
                 val outW = (srcW * scale).toInt().coerceAtLeast(1)
                 val outH = (srcH * scale).toInt().coerceAtLeast(1)
 
-                val bitmap = Bitmap.createBitmap(
-                    outW,
-                    outH,
-                    Bitmap.Config.ARGB_8888
-                )
+                val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
 
                 page!!.render(
                     bitmap,
@@ -631,19 +610,14 @@ private class PdfRendererHolder(file: File) {
                 bitmap
             }
         } catch (e: Throwable) {
-            Log.w(
-                TAG,
-                "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}"
-            )
+            Log.w(TAG, "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}")
             null
         } finally {
             runCatching { page?.close() }
         }
     }
 
-    fun clearCache() {
-        runCatching { cache.evictAll() }
-    }
+    fun clearCache() { runCatching { cache.evictAll() } }
 
     fun close() {
         if (closed) return
@@ -654,7 +628,6 @@ private class PdfRendererHolder(file: File) {
     }
 }
 
-// ===== ITEM PÁGINA =====
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfPageItem(
@@ -673,6 +646,8 @@ fun PdfPageItem(
     val currentPath = remember { mutableStateListOf<Offset>() }
     var canvasW by remember { mutableStateOf(0f) }
     var canvasH by remember { mutableStateOf(0f) }
+    var eraserActive by remember { mutableStateOf(false) }
+    var redrawTrigger by remember { mutableStateOf(0) }
 
     fun toNorm(o: Offset): Offset =
         if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
@@ -689,14 +664,8 @@ fun PdfPageItem(
             for (i in 0 until smoothed.size - 1) {
                 val p0 = smoothed[i]
                 val p1 = smoothed[i + 1]
-                val q = Offset(
-                    0.75f * p0.x + 0.25f * p1.x,
-                    0.75f * p0.y + 0.25f * p1.y
-                )
-                val r = Offset(
-                    0.25f * p0.x + 0.75f * p1.x,
-                    0.25f * p0.y + 0.75f * p1.y
-                )
+                val q = Offset(0.75f * p0.x + 0.25f * p1.x, 0.75f * p0.y + 0.25f * p1.y)
+                val r = Offset(0.25f * p0.x + 0.75f * p1.x, 0.25f * p0.y + 0.75f * p1.y)
                 result.add(q); result.add(r)
             }
             result.add(smoothed.last())
@@ -705,14 +674,12 @@ fun PdfPageItem(
         return smoothed
     }
 
-    // Detectar si es un trazo muy pequeño (detalle/letra)
     fun isTinyStroke(points: List<Offset>): Boolean {
         if (points.isEmpty()) return true
         var minX = points[0].x
         var maxX = points[0].x
         var minY = points[0].y
         var maxY = points[0].y
-
         for (i in 1 until points.size) {
             val p = points[i]
             if (p.x < minX) minX = p.x
@@ -720,11 +687,8 @@ fun PdfPageItem(
             if (p.y < minY) minY = p.y
             if (p.y > maxY) maxY = p.y
         }
-
         val width = maxX - minX
         val height = maxY - minY
-
-        // menos del 3% del lienzo en ambas direcciones: muy pequeño
         return width < 0.03f && height < 0.03f
     }
 
@@ -735,97 +699,71 @@ fun PdfPageItem(
                 .background(Color(0xFF303030))
                 .padding(8.dp)
         ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                    .background(Color.White)
-                    .onSizeChanged { newSize ->
-                        canvasW = newSize.width.toFloat()
-                        canvasH = newSize.height.toFloat()
-                    }
-                    .then(
-                        if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
-                            Modifier.pointerInput(
-                                selectedTool,
-                                smoothingEnabled,
-                                strokeWidth,
-                                canvasW,
-                                canvasH
-                            ) {
-                                awaitEachGesture {
-                                    if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
-
-                                    currentPath.clear()
-
-                                    // down inicial
-                                    val down = awaitFirstDown()
-                                    currentPath.add(toNorm(down.position))
-
-                                    // marcamos si ha habido movimiento “real”
-                                    var moved = false
-
-                                    // arrastre sin usar touch slop de alto nivel
-                                    drag(down.id) { change ->
-                                        moved = true
-                                        change.consume()
-                                        val pos = change.position
-                                        currentPath.add(toNorm(pos))
-                                    }
-
-                                    // Gesto terminado (con o sin movimiento)
-                                    if (currentPath.isNotEmpty()) {
-                                        val basePoints = if (currentPath.size == 1) {
-                                            // solo un punto → mini segmento visible
-                                            val p = currentPath.first()
-                                            listOf(
-                                                p,
-                                                Offset(p.x + 0.01f, p.y + 0.01f)
-                                            )
-                                        } else {
-                                            currentPath.toList()
-                                        }
-
-                                        val tiny = isTinyStroke(basePoints)
-                                        val final =
-                                            if (smoothingEnabled && selectedTool == "pen" && !tiny) {
-                                                smoothPath(basePoints, iterations = 1)
-                                            } else {
-                                                basePoints
-                                            }
-
-                                        if (selectedTool == "eraser") {
-                                            onErase(final)
-                                        } else {
-                                            onPathAdded(
-                                                DrawingPath(
-                                                    final,
-                                                    penColor,
-                                                    strokeWidth,
-                                                    isEraser = false
-                                                )
-                                            )
-                                        }
-                                    }
-
-                                    currentPath.clear()
-                                }
-                            }
-                        } else {
-                            Modifier
+            key(redrawTrigger) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                        .background(Color.White)
+                        .onSizeChanged { newSize ->
+                            canvasW = newSize.width.toFloat()
+                            canvasH = newSize.height.toFloat()
                         }
-                    )
-            ) {
-                // Fondo: la página del PDF
-                drawImage(
-                    bitmap.asImageBitmap(),
-                    dstSize = IntSize(
-                        size.width.roundToInt(),
-                        size.height.roundToInt()
-                    )
-                )
+                        .then(
+                            if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
+                                Modifier.pointerInput(
+                                    selectedTool, smoothingEnabled, strokeWidth, canvasW, canvasH
+                                ) {
+                                    awaitEachGesture {
+                                        if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
+                                        currentPath.clear()
 
-                if (editMode) {
+                                        val down = awaitFirstDown()
+                                        currentPath.add(toNorm(down.position))
+
+                                        drag(down.id) { change ->
+                                            change.consume()
+                                            val pos = change.position
+                                            currentPath.add(toNorm(pos))
+
+                                            if (selectedTool == "eraser") {
+                                                eraserActive = true
+                                                onErase(currentPath.toList())
+                                                redrawTrigger++
+                                            }
+                                        }
+
+                                        if (currentPath.isNotEmpty()) {
+                                            val basePoints = currentPath.toList()
+                                            val tiny = isTinyStroke(basePoints)
+                                            val final =
+                                                if (smoothingEnabled && selectedTool == "pen" && !tiny && basePoints.size > 1) {
+                                                    smoothPath(basePoints, iterations = 1)
+                                                } else basePoints
+
+                                            if (selectedTool == "eraser") {
+                                                onErase(final)
+                                            } else {
+                                                onPathAdded(
+                                                    DrawingPath(
+                                                        final, penColor, strokeWidth, isEraser = false
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        currentPath.clear()
+                                        eraserActive = false
+                                    }
+                                }
+                            } else Modifier
+                        )
+                ) {
+                    // Fondo: la página del PDF
+                    drawImage(
+                        bitmap.asImageBitmap(),
+                        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    )
+
                     // Paths guardados
                     annotations.paths.forEach { p ->
                         when {
@@ -872,7 +810,7 @@ fun PdfPageItem(
                                 color = penColor,
                                 style = Stroke(width = strokeWidth * size.width)
                             )
-                        } else {
+                        } else if (currentPath.size == 1) {
                             val pp = toPx(currentPath.first())
                             drawCircle(
                                 color = penColor,
@@ -977,7 +915,7 @@ fun LeftToolBar(
                 ToolButton(
                     icon = Icons.Default.HorizontalRule,
                     label = "Medio",
-                    selected = strokeWidth >= 0.005f && strokeWidth <= 0.008f,
+                    selected = strokeWidth in 0.005f..0.008f,
                     onClick = { onStrokeChange(0.006f) },
                     compact = true
                 )
@@ -1128,10 +1066,7 @@ fun TunnerSmall(
 
     Box(
         modifier = modifier
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongPress
-            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .background(bg, shape = RoundedCornerShape(999.dp))
             .padding(horizontal = 12.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
@@ -1192,9 +1127,7 @@ fun TunerSettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cerrar")
-            }
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
         }
     )
 }
@@ -1236,10 +1169,9 @@ fun NeedleTunerOverlay(
                 val startAngle = 200f
                 val endAngle = 340f
                 val centerAngle = 270f
-                val sweepLeft = centerAngle - startAngle       // 70
-                val sweepRight = endAngle - centerAngle        // 70
+                val sweepLeft = centerAngle - startAngle
+                val sweepRight = endAngle - centerAngle
 
-                // arco azul (grave)
                 drawArc(
                     color = Color(0xFF1E88E5),
                     startAngle = startAngle,
@@ -1248,7 +1180,6 @@ fun NeedleTunerOverlay(
                     style = Stroke(width = 3.dp.toPx())
                 )
 
-                // arco rojo (agudo)
                 drawArc(
                     color = Color(0xFFE53935),
                     startAngle = centerAngle,
@@ -1257,7 +1188,6 @@ fun NeedleTunerOverlay(
                     style = Stroke(width = 3.dp.toPx())
                 )
 
-                // triángulo verde zona afinada
                 val innerR = radius * 0.55f
                 val outerR = radius * 0.98f
                 val leftTriAngle = centerAngle - 6f
@@ -1279,7 +1209,6 @@ fun NeedleTunerOverlay(
                 }
                 drawPath(triPath, color = Color(0xFF4CAF50))
 
-                // aguja según los cents (-50..+50)
                 val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
                 val needleAngle = centerAngle + normalized * 45f
                 val needleRad = Math.toRadians(needleAngle.toDouble()).toFloat()
