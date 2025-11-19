@@ -91,7 +91,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun AppRoot() {
-    var selectedFile by remember { mutableStateOf<File?>(null) }
+    var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedFile = selectedPath?.let(::File)
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -99,9 +100,9 @@ private fun AppRoot() {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             if (selectedFile == null) {
-                LibraryScreen(onOpen = { selectedFile = it })
+                LibraryScreen(onOpen = { selectedPath = it.absolutePath })
             } else {
-                PdfEditScreen(file = selectedFile!!, onBack = { selectedFile = null })
+                PdfEditScreen(file = selectedFile, onBack = { selectedPath = null })
             }
         }
     }

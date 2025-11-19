@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.shadow
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -103,6 +105,8 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     // zoom / pan
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+    var isPinching by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -318,17 +322,31 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     .then(
                         if (selectedTool == "none") {
                             Modifier.pointerInput(selectedTool) {
-                                detectTransformGestures { _, pan, zoom, _ ->
+                                detectTransformGestures { centroid, pan, zoom, _ ->
                                     val newScale = (scale * zoom).coerceIn(1f, 4f)
+
                                     if (kotlin.math.abs(newScale - scale) > 0.001f) {
+                                        val centerX = size.width / 2f
+                                        val centerY = size.height / 2f
+
+                                        val focusX = (centroid.x - centerX - offsetX) / scale
+                                        val focusY = (centroid.y - centerY - offsetY) / scale
+
                                         scale = newScale
+
+                                        offsetX = centroid.x - centerX - focusX * scale
+                                        offsetY = centroid.y - centerY - focusY * scale
                                     }
+
                                     if (scale > 1f) {
                                         val maxX = (size.width * (scale - 1f)) / 2f
+                                        val maxY = (size.height * (scale - 1f)) / 2f
                                         offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                        offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
                                     } else {
                                         scale = 1f
                                         offsetX = 0f
+                                        offsetY = 0f
                                     }
                                 }
                             }
@@ -337,13 +355,23 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             ) {
                 LazyColumn(
                     state = listState,
+                    userScrollEnabled = !isPinching,
                     modifier = Modifier
                         .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.count { it.pressed }
+                                    isPinching = pressed >= 2
+                                }
+                            }
+                        }
                         .graphicsLayer(
                             scaleX = scale,
                             scaleY = scale,
                             translationX = offsetX,
-                            translationY = 0f
+                            translationY = offsetY
                         ),
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
@@ -402,70 +430,21 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             }
 
             // ===== barra superior (sin título, solo iconos) =====
-            TopAppBar(
-                title = {},
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Default.Home,
-                            contentDescription = "Volver",
-                            tint = Color.White,
-                            modifier = Modifier.size(32.dp)
-                        )
+            StyledTopBar(
+                onBack = onBack,
+                tunerOn = tunerOn,
+                concertModeOn = concertModeOn,
+                onTunerClick = {
+                    if (!tunerOn) {
+                        ensureMicPermission { tunerOn = true }
+                    } else {
+                        tunerOn = false
+                        showNeedleTuner = false
                     }
                 },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            if (!tunerOn) {
-                                ensureMicPermission { tunerOn = true }
-                            } else {
-                                tunerOn = false
-                                showNeedleTuner = false
-                            }
-                        }
-                    ) {
-                        Box(modifier = Modifier.size(28.dp)) {
-                            Icon(
-                                Icons.Default.MusicNote,
-                                contentDescription = if (tunerOn) "Parar afinador" else "Encender afinador",
-                                tint = Color.White,
-                                modifier = Modifier.matchParentSize()
-                            )
-                            if (tunerOn) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                        .background(
-                                            Color(0xFFE53935),
-                                            RoundedCornerShape(999.dp)
-                                        )
-                                )
-                            }
-                        }
-                    }
-                    IconButton(onClick = { concertModeOn = !concertModeOn }) {
-                        Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = "Concert",
-                            tint = if (concertModeOn) Color(0xFFFFC107) else Color.White,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black,
-                    titleContentColor = Color.White
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(topBarHeight)
-                    .border(1.dp, Color.Black)
+                onConcertClick = { concertModeOn = !concertModeOn }
             )
 
-            // ===== banner pequeño del afinador =====
             if (tunerOn) {
                 TunnerSmall(
                     tunner = tunner,
@@ -475,12 +454,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         .fillMaxWidth(0.7f)
                         .height(44.dp),
                     onClick = { showTunerSettings = true },
-                    onLongPress = { showNeedleTuner = !showNeedleTuner }
+                    onLongClick = { showNeedleTuner = !showNeedleTuner }
                 )
             }
 
-            // barra lateral
-            LeftToolBar(
+            StyledLeftToolBar(
                 selectedTool = selectedTool,
                 penColor = penColor,
                 strokeWidth = strokeWidth,
@@ -1050,7 +1028,7 @@ fun TunnerSmall(
     tunner: AudioTuner,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    onLongPress: () -> Unit
+    onLongClick: (Offset) -> Unit
 ) {
     val state by tunner.tuningState.collectAsState(initial = null)
 
@@ -1066,7 +1044,10 @@ fun TunnerSmall(
 
     Box(
         modifier = modifier
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .clickable(onClick = onClick)
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = onLongClick)
+            }
             .background(bg, shape = RoundedCornerShape(999.dp))
             .padding(horizontal = 12.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
@@ -1225,6 +1206,203 @@ fun NeedleTunerOverlay(
                     strokeWidth = 4.dp.toPx()
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StyledTopBar(
+    onBack: () -> Unit,
+    tunerOn: Boolean,
+    concertModeOn: Boolean,
+    onTunerClick: () -> Unit,
+    onConcertClick: () -> Unit
+) {
+    TopAppBar(
+        title = {},
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.Default.Home,
+                    contentDescription = "Volver",
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        },
+        actions = {
+            IconButton(onClick = onTunerClick) {
+                Box(modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Default.MusicNote,
+                        contentDescription = "Afinador",
+                        tint = Color.White,
+                        modifier = Modifier.matchParentSize()
+                    )
+                    if (tunerOn) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .background(Color(0xFFFF5252), RoundedCornerShape(10.dp))
+                        )
+                    }
+                }
+            }
+
+            IconButton(onClick = onConcertClick) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Concert",
+                    tint = if (concertModeOn) Color(0xFFFFC107) else Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color(0xFF111111),
+            titleContentColor = Color.White
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .border(0.5.dp, Color(0xFF1C1C1C))
+            .shadow(8.dp)
+    )
+}
+
+@Composable
+fun StyledLeftToolBar(
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    smoothingEnabled: Boolean,
+    onSelectTool: (String) -> Unit,
+    onColorClick: () -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.width(88.dp),
+        color = Color(0xFF1B1E23),
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            StyledToolButton(
+                icon = Icons.Default.TouchApp,
+                label = "Mover",
+                selected = selectedTool == "none",
+                onClick = { onSelectTool("none") }
+            )
+
+            StyledToolButton(
+                icon = Icons.Default.Edit,
+                label = "Lápiz",
+                selected = selectedTool == "pen",
+                onClick = { onSelectTool("pen") }
+            )
+
+            StyledToolButton(
+                icon = Icons.Default.Delete,
+                label = "Borrar",
+                selected = selectedTool == "eraser",
+                onClick = { onSelectTool("eraser") }
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            Spacer(Modifier.height(12.dp))
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = penColor,
+                modifier = Modifier
+                    .size(54.dp)
+                    .clickable { onColorClick() },
+                shadowElevation = 4.dp
+            ) {}
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                StyledToolButton(
+                    icon = Icons.Default.Remove,
+                    label = "Fino",
+                    selected = strokeWidth < 0.005f,
+                    onClick = { onStrokeChange(0.003f) },
+                    compact = true
+                )
+                StyledToolButton(
+                    icon = Icons.Default.HorizontalRule,
+                    label = "Medio",
+                    selected = strokeWidth in 0.005f..0.008f,
+                    onClick = { onStrokeChange(0.006f) },
+                    compact = true
+                )
+                StyledToolButton(
+                    icon = Icons.Default.DragHandle,
+                    label = "Grueso",
+                    selected = strokeWidth > 0.008f,
+                    onClick = { onStrokeChange(0.01f) },
+                    compact = true
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            Spacer(Modifier.height(12.dp))
+
+            StyledToolButton(
+                icon = Icons.Default.Tune,
+                label = "Suave",
+                selected = smoothingEnabled,
+                onClick = onToggleSmoothing
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            StyledToolButton(
+                icon = Icons.AutoMirrored.Filled.Undo,
+                label = "Undo",
+                selected = false,
+                onClick = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+fun StyledToolButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false
+) {
+    val bg = if (selected) Color(0xFF2E466E) else Color(0xFF272B33)
+    val tint = if (selected) Color(0xFF90CAF9) else Color(0xFFD0D3D8)
+    val size = if (compact) 42.dp else 56.dp
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = bg,
+        modifier = Modifier
+            .size(size)
+            .clickable { onClick() },
+        shadowElevation = if (selected) 6.dp else 2.dp
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
         }
     }
 }
