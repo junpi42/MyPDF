@@ -1,52 +1,85 @@
 package com.example.mypdf
 
+import android.Manifest
 import android.app.Activity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import java.io.File
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MusicNote
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import android.Manifest
+import android.util.Log
+import android.util.LruCache
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.key
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.window.Popup
-import android.util.LruCache
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.shadow
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+private const val TAG = "PDF_TIMING"
+
+data class DrawingPath(
+    val points: List<Offset>,
+    val color: Color,
+    val strokeWidth: Float,
+    val isEraser: Boolean = false
+)
+
+data class PageAnnotations(
+    val pageIndex: Int,
+    val paths: MutableList<DrawingPath> = mutableListOf()
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,652 +88,1321 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
-    var tunerActive by remember { mutableStateOf(false) }
-    val tuner = remember { AudioTuner() }
-    val tuningResult by tuner.tuningState.collectAsState()
+    val tunner = remember { AudioTuner() }
 
-    var showFrequencySelector by remember { mutableStateOf(false) }
+    var selectedTool by remember { mutableStateOf("none") }
+    var penColor by remember { mutableStateOf(Color.Red) }
+    var strokeWidth by remember { mutableStateOf(0.006f) }
+    var smoothingEnabled by remember { mutableStateOf(true) }
+    var showColorPicker by remember { mutableStateOf(false) }
+
+    var tunerOn by remember { mutableStateOf(false) }
+    var concertModeOn by remember { mutableStateOf(false) }
+
+    var showTunerSettings by remember { mutableStateOf(false) }
+    var showNeedleTuner by remember { mutableStateOf(false) }
+
+    // zoom / pan
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+    var isPinching by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
+        ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            tunerActive = true
-            tuner.startTuning(scope)
+        tunerOn = granted
+        if (!granted) runCatching { tunner.stopTuning(clearState = false) }
+    }
+
+    fun ensureMicPermission(onGranted: () -> Unit) {
+        val ok = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (ok) onGranted() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    LaunchedEffect(tunerOn) {
+        if (tunerOn) {
+            val ok = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                tunerOn = false
+            } else {
+                try {
+                    tunner.startTuning(scope)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Error starting tuner: ${e.message}")
+                    tunerOn = false
+                }
+            }
+        } else {
+            runCatching { tunner.stopTuning(clearState = false) }
         }
     }
 
+    // status bar normal
     DisposableEffect(Unit) {
-        WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        WindowCompat.setDecorFitsSystemWindows(activity.window, true)
         val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.isAppearanceLightStatusBars = false
+        activity.window.statusBarColor = Color.Black.toArgb()
+
         onDispose {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-            WindowCompat.setDecorFitsSystemWindows(activity.window, true)
+            runCatching { tunner.stopTuning(clearState = false) }
         }
     }
 
-    // Holder con caché LRU y utilidades de render
+    // ===== PDF / renderizado =====
     val holder = remember(file.path) { PdfRendererHolder(file) }
-
-    var pageCount by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { pageCount = holder.pageCount }
-
-    val pageBitmaps = remember { mutableStateListOf<Bitmap?>() }
-
-    var initialLoading by remember { mutableStateOf(true) }
-
-    val readyThreshold by remember(pageCount) { mutableStateOf(kotlin.math.min(3, kotlin.math.max(pageCount, 0))) }
-
-    var showInitialOverlay by remember { mutableStateOf(true) }
-
-    LaunchedEffect(pageCount) {
-        if (pageCount > 0) {
-            pageBitmaps.clear()
-            repeat(pageCount) { pageBitmaps.add(null) }
-            showInitialOverlay = true
-            initialLoading = true
+    val pageCount = holder.pageCount
+    val pageBitmaps = remember {
+        mutableStateListOf<Bitmap?>().apply {
+            repeat(pageCount) { add(null) }
         }
     }
 
     val config = LocalConfiguration.current
-    val screenWidthPx = (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
+    val screenWidthPx =
+        (config.screenWidthDp * context.resources.displayMetrics.density).toInt()
+    val maxTargetWidthPx = 1920
 
-    LaunchedEffect(screenWidthPx) {
-        if (pageCount > 0 && screenWidthPx > 0) {
-            initialLoading = true
-            holder.clearCache()
-            for (i in 0 until pageCount) {
-                val old = pageBitmaps.getOrNull(i)
-                if (old != null && !old.isRecycled) try { old.recycle() } catch (_: Exception) {}
-                if (i < pageBitmaps.size) pageBitmaps[i] = null
-            }
-            initialLoading = false
-        }
-    }
-
+    // precarga rápida
     LaunchedEffect(pageCount, screenWidthPx) {
-        if (pageCount > 0 && screenWidthPx > 0) {
-            val quickW = kotlin.math.min(screenWidthPx, 600)
-            val bootCount = kotlin.math.min(readyThreshold + 1, pageCount)
-            val semaphore = Semaphore(kotlin.math.min(2, Runtime.getRuntime().availableProcessors()))
-            coroutineScope {
-                repeat(bootCount) { idx ->
-                    if (pageBitmaps.getOrNull(idx) == null) {
-                        launch {
-                            semaphore.withPermit {
-                                val bmpQuick = withContext(Dispatchers.Default) {
-                                    holder.renderPageQuick(idx, quickW)
-                                }
-                                if (bmpQuick != null) {
-                                    withContext(Dispatchers.Main) {
-                                        if (idx < pageBitmaps.size) {
-                                            val prev = pageBitmaps[idx]
-                                            pageBitmaps[idx] = bmpQuick
-                                            if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                                        }
-                                    }
-                                }
+        if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
+        val effectiveWidth = min(screenWidthPx, maxTargetWidthPx)
+        val quickW = min(effectiveWidth, 600)
+        val boot = min(3, pageCount)
+        val sem = Semaphore(1)
+        coroutineScope {
+            repeat(boot) { i ->
+                if (pageBitmaps[i] == null) {
+                    launch {
+                        sem.withPermit {
+                            val bmp = withContext(Dispatchers.Default) {
+                                holder.renderPageQuick(i, quickW)
                             }
+                            if (bmp != null) pageBitmaps[i] = bmp
                         }
                     }
                 }
             }
-            if (pageCount > 0) {
-                val hi = withContext(Dispatchers.Default) { holder.renderPageToWidth(0, screenWidthPx) }
-                if (hi != null && 0 < pageBitmaps.size) {
-                    val prev = pageBitmaps[0]
-                    pageBitmaps[0] = hi
-                    if (prev != null && prev != hi && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(pageBitmaps, readyThreshold) {
-        snapshotFlow { pageBitmaps.count { it != null } }
-            .collectLatest { loaded ->
-                if (loaded >= readyThreshold) showInitialOverlay = false
-            }
-    }
-
-    LaunchedEffect(pageCount) {
-        if (pageCount > 0) {
-            delay(1500)
-            if (pageBitmaps.count { it != null } > 0) showInitialOverlay = false
         }
     }
 
     val listState = rememberLazyListState()
 
-    var isScrolling by remember { mutableStateOf(false) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }
-            .distinctUntilChanged()
-            .collectLatest { isScrolling = it }
-    }
-
-    val lastPage = remember(file.path) { getLastPage(context, file).coerceAtLeast(0) }
-    var didScrollToLast by remember(file.path) { mutableStateOf(false) }
-
-    LaunchedEffect(pageCount, lastPage, showInitialOverlay) {
-        if (pageCount > 0 && !didScrollToLast) {
-            val target = lastPage.coerceIn(0, pageCount - 1)
-            if (!showInitialOverlay) {
-                try { listState.scrollToItem(target) } catch (_: Exception) {}
-                didScrollToLast = true
-            }
-        }
-    }
-
-    LaunchedEffect(listState, pageCount) {
-        if (pageCount <= 0) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collectLatest { idx ->
-                saveLastPage(context, file, idx.coerceIn(0, pageCount - 1))
-            }
-    }
-
-    val maxParallel = minOf(3, Runtime.getRuntime().availableProcessors())
-    val semaphore = remember { Semaphore(maxParallel) }
-
+    // render hi-res bajo demanda
     LaunchedEffect(listState, pageCount, screenWidthPx) {
         if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
-
-        snapshotFlow {
-            val first = listState.firstVisibleItemIndex
-            val visibles = listState.layoutInfo.visibleItemsInfo.map { it.index }.toSet()
-            Pair(first, visibles)
-        }.collectLatest { (firstIndex, visibleSet) ->
-            initialLoading = pageBitmaps.count { it != null } == 0
-
-            val prefetchBefore = 3
-            val prefetchAfter = 8
-            val start = (firstIndex - prefetchBefore).coerceAtLeast(0)
-            val end = (firstIndex + prefetchAfter).coerceAtMost(pageCount - 1)
-
-            val prioritized = buildList {
-                addAll(visibleSet.sorted())
-                var offset = 1
-                while (true) {
-                    val p = firstIndex + offset
-                    val m = firstIndex - offset
-                    var added = false
-                    if (p <= end) { add(p); added = true }
-                    if (m >= start) { add(m); added = true }
-                    if (!added) break
-                    offset++
-                }
-            }.distinct().filter { it in start..end }
-
-            coroutineScope {
-                val quickW = minOf(screenWidthPx, 600)
-                prioritized.forEach { idx ->
-                    if (pageBitmaps.getOrNull(idx) == null) {
-                        launch(Dispatchers.Default) {
-                            val bmpQuick = holder.renderPageQuick(idx, quickW)
-                            if (bmpQuick != null) {
-                                withContext(Dispatchers.Main) {
-                                    if (idx < pageBitmaps.size) {
-                                        val prev = pageBitmaps[idx]
-                                        pageBitmaps[idx] = bmpQuick
-                                        if (prev != null && prev != bmpQuick && !prev.isRecycled) try { prev.recycle() } catch (_: Exception) {}
-                                    }
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .distinctUntilChanged()
+            .collectLatest { visibles ->
+                if (visibles.isEmpty()) return@collectLatest
+                val hiW = min(screenWidthPx, maxTargetWidthPx)
+                visibles.take(2).forEach { idx ->
+                    launch {
+                        val bmp = withContext(Dispatchers.Default) {
+                            holder.renderPageToWidth(idx, hiW)
+                        }
+                        bmp?.let {
+                            if (idx in 0 until pageCount) {
+                                val prev = pageBitmaps[idx]
+                                if (prev == null || prev.width < it.width * 0.9f) {
+                                    pageBitmaps[idx] = it
+                                    if (prev != null && !prev.isRecycled) prev.recycle()
                                 }
                             }
                         }
                     }
                 }
             }
+    }
 
-            coroutineScope {
-                val hiPriority = buildSet {
-                    addAll(visibleSet)
-                    val next = (visibleSet.maxOrNull() ?: firstIndex) + 1
-                    if (next in 0 until pageCount) add(next)
-                }
-                hiPriority.forEach { idx ->
-                    launch {
-                        semaphore.withPermit {
-                            val bmpHi = withContext(Dispatchers.Default) {
-                                holder.renderPageToWidth(idx, screenWidthPx)
-                            }
-                            if (bmpHi != null) {
-                                withContext(Dispatchers.Main) {
-                                    if (idx < pageBitmaps.size) {
-                                        val current = pageBitmaps[idx]
-                                        val shouldReplace = current == null || (current.width < (screenWidthPx * 0.95f))
-                                        if (shouldReplace) {
-                                            pageBitmaps[idx] = bmpHi
-                                            if (current != null && current != bmpHi && !current.isRecycled) try { current.recycle() } catch (_: Exception) {}
-                                        }
-                                    }
-                                }
+    // ===== anotaciones =====
+    val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
+    val annFile = remember(file.path) {
+        File(file.parentFile, file.nameWithoutExtension + ".ann.json")
+    }
+    var saveJob by remember { mutableStateOf<Job?>(null) }
+
+    val scheduleSave: () -> Unit = {
+        saveJob?.cancel()
+        saveJob = scope.launch(Dispatchers.IO) {
+            delay(400)
+            runCatching {
+                val pages = JSONArray()
+                annotations.toSortedMap().forEach { (idx, page) ->
+                    val jPaths = JSONArray()
+                    page.paths.forEach { p ->
+                        val pts = JSONArray().also { arr ->
+                            p.points.forEach { o ->
+                                arr.put(JSONArray().put(o.x).put(o.y))
                             }
                         }
+                        jPaths.put(
+                            JSONObject()
+                                .put("e", p.isEraser)
+                                .put("c", p.color.toArgb())
+                                .put("w", p.strokeWidth)
+                                .put("pts", pts)
+                        )
                     }
+                    pages.put(JSONObject().put("index", idx).put("paths", jPaths))
                 }
+                val root = JSONObject().put("version", 1).put("pages", pages)
+                val tmp = File(annFile.parentFile, annFile.name + ".tmp")
+                FileOutputStream(tmp).use {
+                    it.write(root.toString().toByteArray(Charsets.UTF_8))
+                }
+                if (annFile.exists()) annFile.delete()
+                tmp.renameTo(annFile)
             }
         }
     }
 
-    Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (showInitialOverlay && pageCount > 0) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color.White)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        val loadedCount = pageBitmaps.count { it != null }
-                        Text(
-                            text = "Preparando visor: $loadedCount / $pageCount",
-                            color = Color.White
-                        )
-                    }
+    // cargar anotaciones
+    LaunchedEffect(annFile.path) {
+        withContext(Dispatchers.IO) {
+            if (!annFile.exists()) return@withContext
+            runCatching {
+                val text = FileInputStream(annFile).use {
+                    it.readBytes().toString(Charsets.UTF_8)
                 }
-            } else {
-                if (pageCount <= 0) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Cargando…", color = Color.White)
-                    }
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = 0.dp),
-                    ) {
-                        items(pageCount) { index ->
-                            val bmp = pageBitmaps.getOrNull(index)
-                            PdfPageItem(index = index, bitmap = bmp, showLoadingLabel = !isScrolling)
-                        }
-                    }
-                }
-            }
-
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (initialLoading) "Cargando..." else "$pageCount páginas",
-                        color = Color.White
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Atrás",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0x66000000),
-                    titleContentColor = Color.White
-                )
-            )
-
-            FloatingActionButton(
-                onClick = {
-                    if (tunerActive) {
-                        tunerActive = false
-                        tuner.stopTuning()
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp),
-                containerColor = if (tunerActive) Color(0xFFFF6B6B) else Color(0xFF4ECDC4)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MusicNote,
-                    contentDescription = if (tunerActive) "Desactivar afinador" else "Activar afinador",
-                    tint = Color.White
-                )
-            }
-
-            if (tunerActive) {
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 80.dp, start = 16.dp, end = 16.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xE6000000)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(16.dp)
-                            .fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(60.dp)
-                                .background(
-                                    color = when {
-                                        tuningResult == null -> Color.Gray
-                                        tuningResult?.errorMessage != null -> Color(0xFFFF6B6B)
-                                        tuningResult?.isInTune == true -> Color(0xFF4CAF50)
-                                        else -> Color(0xFFFF6B6B)
-                                    },
-                                    shape = RoundedCornerShape(8.dp)
+                val root = JSONObject(text)
+                val pages = root.optJSONArray("pages") ?: JSONArray()
+                val loaded = mutableMapOf<Int, PageAnnotations>()
+                for (i in 0 until pages.length()) {
+                    val jp = pages.getJSONObject(i)
+                    val idx = jp.optInt("index", i)
+                    val jPaths = jp.optJSONArray("paths") ?: JSONArray()
+                    val list = mutableListOf<DrawingPath>()
+                    for (k in 0 until jPaths.length()) {
+                        val jpath = jPaths.getJSONObject(k)
+                        val w = jpath.optDouble("w", 0.006).toFloat()
+                        val colorInt = jpath.optInt("c", 0xFF000000.toInt())
+                        val isE = jpath.optBoolean("e", false)
+                        val ptsArr = jpath.optJSONArray("pts") ?: JSONArray()
+                        val pts = mutableListOf<Offset>()
+                        for (pIdx in 0 until ptsArr.length()) {
+                            val pair = ptsArr.getJSONArray(pIdx)
+                            pts.add(
+                                Offset(
+                                    pair.optDouble(0, 0.0).toFloat(),
+                                    pair.optDouble(1, 0.0).toFloat()
                                 )
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onLongPress = {
-                                            showFrequencySelector = true
-                                        }
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = when {
-                                    tuningResult?.errorMessage != null -> tuningResult?.errorMessage ?: ""
-                                    tuningResult?.isInTune == true -> "✓ AFINADO"
-                                    tuningResult != null -> "DESAFINADO"
-                                    else -> "Escuchando..."
-                                },
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold
                             )
                         }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        tuningResult?.let { result ->
-                            if (result.errorMessage == null) {
-                                Text(
-                                    text = "Nota: ${result.targetNote}",
-                                    color = Color.White,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                Text(
-                                    text = String.format("%.1f Hz", result.detectedFrequency),
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 16.sp
-                                )
-
-                                val centsText = if (result.centsOff > 0) {
-                                    String.format("+%.0f cents (alto)", result.centsOff)
-                                } else {
-                                    String.format("%.0f cents (bajo)", result.centsOff)
-                                }
-
-                                Text(
-                                    text = centsText,
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
+                        list.add(DrawingPath(pts, Color(colorInt), w, isE))
                     }
+                    loaded[idx] = PageAnnotations(idx, list)
                 }
-
-                if (showFrequencySelector) {
-                    FrequencySelectorPopup(
-                        tuner = tuner,
-                        onDismiss = { showFrequencySelector = false }
-                    )
+                withContext(Dispatchers.Main) {
+                    annotations.clear()
+                    annotations.putAll(loaded)
                 }
             }
         }
     }
 
-    DisposableEffect(holder) {
-        onDispose {
-            try { saveLastPage(context, file, listState.firstVisibleItemIndex) } catch (_: Exception) {}
-            tuner.stopTuning()
-            holder.close()
-            pageBitmaps.forEach { bmp ->
-                try { if (bmp != null && !bmp.isRecycled) bmp.recycle() } catch (_: Exception) {}
+    val topBarHeight = 64.dp
+
+    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+        Box(Modifier.fillMaxSize()) {
+
+            // ===== contenido PDF con zoom/pan =====
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = topBarHeight)
+                    .then(
+                        if (selectedTool == "none") {
+                            Modifier.pointerInput(selectedTool) {
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    val newScale = (scale * zoom).coerceIn(1f, 4f)
+
+                                    if (kotlin.math.abs(newScale - scale) > 0.001f) {
+                                        val centerX = size.width / 2f
+                                        val centerY = size.height / 2f
+
+                                        val focusX = (centroid.x - centerX - offsetX) / scale
+                                        val focusY = (centroid.y - centerY - offsetY) / scale
+
+                                        scale = newScale
+
+                                        offsetX = centroid.x - centerX - focusX * scale
+                                        offsetY = centroid.y - centerY - focusY * scale
+                                    }
+
+                                    if (scale > 1f) {
+                                        val maxX = (size.width * (scale - 1f)) / 2f
+                                        val maxY = (size.height * (scale - 1f)) / 2f
+                                        offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                        offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                                    } else {
+                                        scale = 1f
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    }
+                                }
+                            }
+                        } else Modifier
+                    )
+            ) {
+                LazyColumn(
+                    state = listState,
+                    userScrollEnabled = !isPinching,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.count { it.pressed }
+                                    isPinching = pressed >= 2
+                                }
+                            }
+                        }
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        ),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(pageCount) { index ->
+                        val bmp = pageBitmaps.getOrNull(index)
+                        PdfPageItem(
+                            index = index,
+                            bitmap = bmp,
+                            showLoadingLabel = bmp == null,
+                            editMode = true,
+                            annotations = annotations.getOrPut(index) {
+                                PageAnnotations(index)
+                            },
+                            selectedTool = selectedTool,
+                            penColor = penColor,
+                            strokeWidth = strokeWidth,
+                            smoothingEnabled = smoothingEnabled,
+                            onPathAdded = { path ->
+                                annotations.getOrPut(index) {
+                                    PageAnnotations(index)
+                                }.paths.add(path)
+                                scheduleSave()
+                            },
+                            onErase = { eraserPoints ->
+                                val page = annotations.getOrPut(index) {
+                                    PageAnnotations(index)
+                                }
+                                val toRemove = mutableSetOf<Int>()
+                                page.paths.forEachIndexed { pIdx, p ->
+                                    val pts = p.points
+                                    if (pts.size < 2) return@forEachIndexed
+                                    var hit = false
+                                    for (i in 0 until pts.size - 1) {
+                                        val a = pts[i]; val b = pts[i + 1]
+                                        if (eraserPoints.any { e ->
+                                                distancePointToSegment(
+                                                    e, a, b
+                                                ) <= (strokeWidth * 100)
+                                            }
+                                        ) {
+                                            hit = true; break
+                                        }
+                                    }
+                                    if (hit) toRemove.add(pIdx)
+                                }
+                                if (toRemove.isNotEmpty()) {
+                                    toRemove.sortedDescending()
+                                        .forEach { page.paths.removeAt(it) }
+                                    scheduleSave()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
             }
-            pageBitmaps.clear()
+
+            // ===== barra superior (sin título, solo iconos) =====
+            StyledTopBar(
+                onBack = onBack,
+                tunerOn = tunerOn,
+                concertModeOn = concertModeOn,
+                onTunerClick = {
+                    if (!tunerOn) {
+                        ensureMicPermission { tunerOn = true }
+                    } else {
+                        tunerOn = false
+                        showNeedleTuner = false
+                    }
+                },
+                onConcertClick = { concertModeOn = !concertModeOn }
+            )
+
+            if (tunerOn) {
+                TunnerSmall(
+                    tunner = tunner,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = (topBarHeight - 44.dp) / 2)
+                        .fillMaxWidth(0.7f)
+                        .height(44.dp),
+                    onClick = { showTunerSettings = true },
+                    onLongClick = { showNeedleTuner = !showNeedleTuner }
+                )
+            }
+
+            StyledLeftToolBar(
+                selectedTool = selectedTool,
+                penColor = penColor,
+                strokeWidth = strokeWidth,
+                smoothingEnabled = smoothingEnabled,
+                onSelectTool = { selectedTool = it },
+                onColorClick = { showColorPicker = true },
+                onStrokeChange = { strokeWidth = it },
+                onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
+                onUndo = {
+                    val currentPage = listState.firstVisibleItemIndex
+                    annotations[currentPage]?.paths?.removeLastOrNull()
+                    scheduleSave()
+                },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = topBarHeight)
+            )
+
+            if (showColorPicker) {
+                ColorPickerDialog(
+                    currentColor = penColor,
+                    onColorSelected = { penColor = it },
+                    onDismiss = { showColorPicker = false }
+                )
+            }
+
+            // diálogo ajustes afinador
+            if (showTunerSettings) {
+                TunerSettingsDialog(
+                    tuner = tunner,
+                    onDismiss = { showTunerSettings = false }
+                )
+            }
+
+            // afinador de aguja (debajo del banner)
+            if (showNeedleTuner && tunerOn) {
+                NeedleTunerOverlay(
+                    tunner = tunner,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 56.dp)
+                )
+            }
         }
     }
 }
 
+// ================= utilidades =================
+
+private fun distancePointToSegment(p: Offset, a: Offset, b: Offset): Float {
+    val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
+    val vx = bx - ax; val vy = by - ay
+    val wx = p.x - ax; val wy = p.y - ay
+    val vv = vx * vx + vy * vy
+    val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
+    val nx = ax + t * vx
+    val ny = ay + t * vy
+    val dx = p.x - nx
+    val dy = p.y - ny
+    return kotlin.math.sqrt(dx * dx + dy * dy)
+}
+
+// ===== PDF HOLDER =====
+private class PdfRendererHolder(file: File) {
+    private val pfd: ParcelFileDescriptor =
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    private val renderer: PdfRenderer = PdfRenderer(pfd)
+
+    @Volatile private var closed = false
+    private val renderMutex = Mutex()
+
+    // Límite de memoria de la caché (1/6 de la memoria máxima de la app)
+    private val maxKb =
+        (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
+
+    private fun cacheKey(pageIndex: Int, targetWidth: Int): Int {
+        val clamped = targetWidth.coerceIn(200, 1920)
+        return (pageIndex shl 16) or (clamped and 0xFFFF)
+    }
+
+    private val cache = object : LruCache<Int, Bitmap>(maxKb) {
+        override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount / 1024
+    }
+
+    val pageCount: Int get() = renderer.pageCount
+
+    suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? =
+        renderInternal(index, quickTargetW)
+
+    suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? =
+        renderInternal(index, targetW)
+
+    private suspend fun renderInternal(index: Int, targetW: Int): Bitmap? {
+        if (closed) return null
+
+        val clampedTargetW = targetW.coerceIn(200, 1920)
+        val key = cacheKey(index, clampedTargetW)
+
+        cache.get(key)?.let { return it }
+
+        var page: PdfRenderer.Page? = null
+        return try {
+            renderMutex.withLock {
+                if (closed) return null
+                if (index !in 0 until renderer.pageCount) return null
+
+                cache.get(key)?.let { return it }
+
+                page = renderer.openPage(index)
+                val srcW = page!!.width
+                val srcH = page!!.height
+
+                val scale = (clampedTargetW.toFloat() / srcW).coerceIn(0.1f, 8f)
+                val outW = (srcW * scale).toInt().coerceAtLeast(1)
+                val outH = (srcH * scale).toInt().coerceAtLeast(1)
+
+                val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+
+                page!!.render(
+                    bitmap,
+                    null,
+                    null,
+                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                )
+
+                cache.put(key, bitmap)
+                bitmap
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        } finally {
+            runCatching { page?.close() }
+        }
+    }
+
+    fun clearCache() { runCatching { cache.evictAll() } }
+
+    fun close() {
+        if (closed) return
+        closed = true
+        runCatching { renderer.close() }
+        runCatching { pfd.close() }
+        runCatching { cache.evictAll() }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PdfPageItem(
+fun PdfPageItem(
     index: Int,
     bitmap: Bitmap?,
-    showLoadingLabel: Boolean
+    showLoadingLabel: Boolean,
+    editMode: Boolean,
+    annotations: PageAnnotations,
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    smoothingEnabled: Boolean,
+    onPathAdded: (DrawingPath) -> Unit,
+    onErase: (List<Offset>) -> Unit
 ) {
+    val currentPath = remember { mutableStateListOf<Offset>() }
+    var canvasW by remember { mutableStateOf(0f) }
+    var canvasH by remember { mutableStateOf(0f) }
+    var eraserActive by remember { mutableStateOf(false) }
+    var redrawTrigger by remember { mutableStateOf(0) }
+
+    fun toNorm(o: Offset): Offset =
+        if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
+
+    fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
+
+    // Suavizado sencillo tipo Chaikin
+    fun smoothPath(points: List<Offset>, iterations: Int = 1): List<Offset> {
+        if (points.size < 3) return points
+        var smoothed = points
+        repeat(iterations) {
+            val result = mutableListOf<Offset>()
+            result.add(smoothed.first())
+            for (i in 0 until smoothed.size - 1) {
+                val p0 = smoothed[i]
+                val p1 = smoothed[i + 1]
+                val q = Offset(0.75f * p0.x + 0.25f * p1.x, 0.75f * p0.y + 0.25f * p1.y)
+                val r = Offset(0.25f * p0.x + 0.75f * p1.x, 0.25f * p0.y + 0.75f * p1.y)
+                result.add(q); result.add(r)
+            }
+            result.add(smoothed.last())
+            smoothed = result
+        }
+        return smoothed
+    }
+
+    fun isTinyStroke(points: List<Offset>): Boolean {
+        if (points.isEmpty()) return true
+        var minX = points[0].x
+        var maxX = points[0].x
+        var minY = points[0].y
+        var maxY = points[0].y
+        for (i in 1 until points.size) {
+            val p = points[i]
+            if (p.x < minX) minX = p.x
+            if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.y > maxY) maxY = p.y
+        }
+        val width = maxX - minX
+        val height = maxY - minY
+        return width < 0.03f && height < 0.03f
+    }
+
     if (bitmap != null) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Página ${index + 1}",
-            modifier = Modifier.fillMaxWidth()
-        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF303030))
+                .padding(8.dp)
+        ) {
+            key(redrawTrigger) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                        .background(Color.White)
+                        .onSizeChanged { newSize ->
+                            canvasW = newSize.width.toFloat()
+                            canvasH = newSize.height.toFloat()
+                        }
+                        .then(
+                            if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
+                                Modifier.pointerInput(
+                                    selectedTool, smoothingEnabled, strokeWidth, canvasW, canvasH
+                                ) {
+                                    awaitEachGesture {
+                                        if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
+                                        currentPath.clear()
+
+                                        val down = awaitFirstDown()
+                                        currentPath.add(toNorm(down.position))
+
+                                        drag(down.id) { change ->
+                                            change.consume()
+                                            val pos = change.position
+                                            currentPath.add(toNorm(pos))
+
+                                            if (selectedTool == "eraser") {
+                                                eraserActive = true
+                                                onErase(currentPath.toList())
+                                                redrawTrigger++
+                                            }
+                                        }
+
+                                        if (currentPath.isNotEmpty()) {
+                                            val basePoints = currentPath.toList()
+                                            val tiny = isTinyStroke(basePoints)
+                                            val final =
+                                                if (smoothingEnabled && selectedTool == "pen" && !tiny && basePoints.size > 1) {
+                                                    smoothPath(basePoints, iterations = 1)
+                                                } else basePoints
+
+                                            if (selectedTool == "eraser") {
+                                                onErase(final)
+                                            } else {
+                                                onPathAdded(
+                                                    DrawingPath(
+                                                        final, penColor, strokeWidth, isEraser = false
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        currentPath.clear()
+                                        eraserActive = false
+                                    }
+                                }
+                            } else Modifier
+                        )
+                ) {
+                    // Fondo: la página del PDF
+                    drawImage(
+                        bitmap.asImageBitmap(),
+                        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    )
+
+                    // Paths guardados
+                    annotations.paths.forEach { p ->
+                        when {
+                            p.points.size > 1 -> {
+                                val path = Path().apply {
+                                    val first = toPx(p.points.first())
+                                    moveTo(first.x, first.y)
+                                    p.points.drop(1).forEach { pt ->
+                                        val pp = toPx(pt)
+                                        lineTo(pp.x, pp.y)
+                                    }
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = p.color,
+                                    style = Stroke(width = p.strokeWidth * size.width)
+                                )
+                            }
+
+                            p.points.size == 1 -> {
+                                val pp = toPx(p.points.first())
+                                drawCircle(
+                                    color = p.color,
+                                    radius = (p.strokeWidth * size.width) / 2f,
+                                    center = pp
+                                )
+                            }
+                        }
+                    }
+
+                    // Path en vivo
+                    if (selectedTool == "pen" && currentPath.isNotEmpty()) {
+                        if (currentPath.size > 1) {
+                            val path = Path().apply {
+                                val first = toPx(currentPath.first())
+                                moveTo(first.x, first.y)
+                                currentPath.drop(1).forEach { pt ->
+                                    val pp = toPx(pt)
+                                    lineTo(pp.x, pp.y)
+                                }
+                            }
+                            drawPath(
+                                path = path,
+                                color = penColor,
+                                style = Stroke(width = strokeWidth * size.width)
+                            )
+                        } else if (currentPath.size == 1) {
+                            val pp = toPx(currentPath.first())
+                            drawCircle(
+                                color = penColor,
+                                radius = (strokeWidth * size.width) / 2f,
+                                center = pp
+                            )
+                        }
+                    }
+                }
+            }
+        }
     } else {
         Box(
-            modifier = Modifier
+            Modifier
                 .fillMaxWidth()
                 .height(200.dp)
                 .background(Color(0xFF1E1E1E)),
             contentAlignment = Alignment.Center
         ) {
             if (showLoadingLabel) {
-                CircularProgressIndicator(color = Color.White.copy(alpha = 0.8f), strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    color = Color.White.copy(alpha = 0.8f),
+                    strokeWidth = 2.dp
+                )
             }
         }
     }
 }
 
-private class PdfRendererHolder(file: File) {
-    private val pfd: ParcelFileDescriptor =
-        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-    private val renderer: PdfRenderer = PdfRenderer(pfd)
+// ===== BARRA IZQUIERDA =====
+@Composable
+fun LeftToolBar(
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    smoothingEnabled: Boolean,
+    onSelectTool: (String) -> Unit,
+    onColorClick: () -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.width(80.dp),
+        color = Color(0xFF2F343A)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ToolButton(
+                icon = Icons.Default.TouchApp,
+                label = "Navegar",
+                selected = selectedTool == "none",
+                onClick = { onSelectTool("none") }
+            )
+            ToolButton(
+                icon = Icons.Default.Edit,
+                label = "Lápiz",
+                selected = selectedTool == "pen",
+                onClick = { onSelectTool("pen") }
+            )
+            ToolButton(
+                icon = Icons.Default.Delete,
+                label = "Borrador",
+                selected = selectedTool == "eraser",
+                onClick = { onSelectTool("eraser") }
+            )
 
-    private val renderMutex = Mutex()
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.width(48.dp)
+            )
+            Spacer(Modifier.height(8.dp))
 
-    private val maxKb = (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
-    private val cache = object : LruCache<Int, Bitmap>(maxKb) {
-        override fun sizeOf(key: Int, value: Bitmap): Int {
-            return (value.byteCount / 1024)
-        }
-        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap?, newValue: Bitmap?) {
-        }
-    }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = penColor,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable { onColorClick() },
+                shadowElevation = 2.dp
+            ) {}
 
-    val pageCount: Int get() = renderer.pageCount
-
-    suspend fun renderPageQuick(index: Int, quickTargetW: Int): Bitmap? {
-        cache.get(index)?.let { existing ->
-            if (existing.width >= quickTargetW * 0.95f) return existing
-        }
-        return renderInternal(index, quickTargetW, Bitmap.Config.RGB_565)
-    }
-
-    suspend fun renderPageToWidth(index: Int, targetW: Int): Bitmap? {
-        cache.get(index)?.let { existing ->
-            if (existing.width >= targetW * 0.95f) return existing
-        }
-        return renderInternal(index, targetW, Bitmap.Config.ARGB_8888)
-    }
-
-    private suspend fun renderInternal(index: Int, targetW: Int, config: Bitmap.Config): Bitmap? {
-        suspend fun attempt(): Bitmap? {
-            var page: PdfRenderer.Page? = null
-            return try {
-                renderMutex.withLock {
-                    page = renderer.openPage(index)
-                    val srcW = page!!.width
-                    val srcH = page!!.height
-                    val scale = (targetW.toFloat() / srcW).coerceAtLeast(0.1f)
-                    val outW = (srcW * scale).toInt().coerceAtLeast(1)
-                    val outH = (srcH * scale).toInt().coerceAtLeast(1)
-                    val bitmap = Bitmap.createBitmap(outW, outH, config)
-                    page!!.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    cache.put(index, bitmap)
-                    bitmap
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            } finally {
-                try { page?.close() } catch (_: Exception) {}
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(vertical = 8.dp)
+            ) {
+                ToolButton(
+                    icon = Icons.Default.Remove,
+                    label = "Fino",
+                    selected = strokeWidth < 0.005f,
+                    onClick = { onStrokeChange(0.003f) },
+                    compact = true
+                )
+                Spacer(Modifier.height(4.dp))
+                ToolButton(
+                    icon = Icons.Default.HorizontalRule,
+                    label = "Medio",
+                    selected = strokeWidth in 0.005f..0.008f,
+                    onClick = { onStrokeChange(0.006f) },
+                    compact = true
+                )
+                Spacer(Modifier.height(4.dp))
+                ToolButton(
+                    icon = Icons.Default.DragHandle,
+                    label = "Grueso",
+                    selected = strokeWidth > 0.008f,
+                    onClick = { onStrokeChange(0.01f) },
+                    compact = true
+                )
             }
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.width(48.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+
+            ToolButton(
+                icon = Icons.Default.Tune,
+                label = "Suavizado",
+                selected = smoothingEnabled,
+                onClick = onToggleSmoothing
+            )
+
+            Spacer(Modifier.weight(1f))
+
+            ToolButton(
+                icon = Icons.AutoMirrored.Filled.Undo,
+                label = "Deshacer",
+                selected = false,
+                onClick = onUndo
+            )
         }
-        val first = attempt()
-        if (first != null) return first
-        try { kotlinx.coroutines.delay(80) } catch (_: Exception) {}
-        return attempt()
-    }
-
-    fun clearCache() {
-        try {
-            cache.evictAll()
-        } catch (_: Exception) {}
-    }
-
-    fun close() {
-        try {
-            renderer.close()
-            pfd.close()
-            cache.evictAll()
-        } catch (_: Exception) { }
     }
 }
 
 @Composable
-fun FrequencySelectorPopup(
+fun ToolButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false
+) {
+    val bg = if (selected) Color(0xFFEFF6FF) else Color.Transparent
+    val tint = if (selected) Color(0xFF1D4ED8) else Color.White
+    val size = if (compact) 40.dp else 56.dp
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        modifier = Modifier
+            .size(size)
+            .clickable { onClick() }
+    ) {
+        Box(
+            Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
+            )
+        }
+    }
+}
+
+// ===== DIALOGO DE COLOR =====
+@Composable
+fun ColorPickerDialog(
+    currentColor: Color,
+    onColorSelected: (Color) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = null,
+        text = {
+            Column {
+                val colors = listOf(
+                    Color.Red, Color.Blue, Color.Green, Color.Yellow,
+                    Color.Black, Color.Magenta, Color.Cyan, Color(0xFFFF6B6B),
+                    Color(0xFF4ECDC4), Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA)
+                )
+                colors.chunked(4).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        row.forEach { color ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = color,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clickable {
+                                        onColorSelected(color)
+                                        onDismiss()
+                                    },
+                                shadowElevation = if (color == currentColor) 4.dp else 0.dp,
+                                border = if (color == currentColor)
+                                    androidx.compose.foundation.BorderStroke(2.dp, Color.Black)
+                                else null
+                            ) {}
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+        },
+        confirmButton = {
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = null,
+                    tint = Color.White
+                )
+            }
+        }
+    )
+}
+
+// ===== MINI WIDGET AFINADOR =====
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TunnerSmall(
+    tunner: AudioTuner,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: (Offset) -> Unit
+) {
+    val state by tunner.tuningState.collectAsState(initial = null)
+
+    val bg = when (val s = state) {
+        null -> Color.DarkGray
+        else -> when {
+            s.isInTune -> Color(0xFF4CAF50)
+            s.centsOff > 10.0 -> Color(0xFFE53935)
+            s.centsOff < -10.0 -> Color(0xFF1E88E5)
+            else -> Color(0xFFFFA000)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = onLongClick)
+            }
+            .background(bg, shape = RoundedCornerShape(999.dp))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val note = state?.targetNote ?: "--"
+        Text(
+            note,
+            color = Color.Black,
+            style = MaterialTheme.typography.titleMedium
+        )
+    }
+}
+
+// ===== DIALOGO AJUSTES AFINADOR =====
+@Composable
+fun TunerSettingsDialog(
     tuner: AudioTuner,
     onDismiss: () -> Unit
 ) {
-    val currentFreq by tuner.baseFrequency.collectAsState()
-    val isNoisy by tuner.noisyEnvironment.collectAsState()
+    val a4 by tuner.baseFrequency.collectAsState(initial = 442.0)
+    val noisy by tuner.noisyEnvironment.collectAsState(initial = false)
+    var daltonic by remember { mutableStateOf(false) }
 
-    Popup(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier
-                .padding(16.dp)
-                .widthIn(min = 280.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.White
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Ajustes del afinador",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color.Black
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Frecuencia base",
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    color = Color.Black
-                )
-
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ajustes del afinador") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
-                        onClick = { tuner.decrementBaseFrequency(1.0) },
-                        modifier = Modifier.size(50.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text("-", fontSize = 30.sp)
+                    IconButton(onClick = { tuner.decrementBaseFrequency(1.0) }) {
+                        Icon(Icons.Default.Remove, contentDescription = "Menos")
                     }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
                     Text(
-                        text = "${currentFreq.toInt()} Hz",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black,
-                        modifier = Modifier.width(80.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        text = "A4: ${a4.toInt()} Hz",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp)
                     )
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Button(
-                        onClick = { tuner.incrementBaseFrequency(1.0) },
-                        modifier = Modifier.size(50.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text("+", fontSize = 30.sp)
+                    IconButton(onClick = { tuner.incrementBaseFrequency(1.0) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Más")
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = Color.LightGray)
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Tipo de ambiente",
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    color = Color.Black
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { tuner.setNoisyEnvironment(false) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (!isNoisy) Color(0xFF4CAF50) else Color.Gray
-                        )
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(" Entorno Silencioso", fontSize = 20.sp)
-                        }
-                    }
-
-                    Button(
-                        onClick = { tuner.setNoisyEnvironment(true) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isNoisy) Color(0xFFFF6B6B) else Color.Gray
-                        )
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-
-                            Text("Entorno Ruidoso", fontSize = 20.sp)
-                        }
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = noisy, onCheckedChange = { tuner.setNoisyEnvironment(it) })
+                    Spacer(Modifier.width(4.dp))
+                    Text("Ambiente ruidoso")
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Cerrar")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = daltonic, onCheckedChange = { daltonic = it })
+                    Spacer(Modifier.width(4.dp))
+                    Text("Daltonismo (próximamente)")
                 }
             }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+}
+
+// ===== AFINADOR DE AGUJA =====
+@Composable
+fun NeedleTunerOverlay(
+    tunner: AudioTuner,
+    modifier: Modifier = Modifier
+) {
+    val result by tunner.tuningState.collectAsState(initial = null)
+    val cents = (result?.centsOff ?: 0.0).coerceIn(-50.0, 50.0)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(130.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+            tonalElevation = 8.dp,
+            color = Color(0xE0222222),
+            modifier = Modifier
+                .fillMaxWidth(0.45f)
+                .fillMaxHeight()
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val radius = min(w, h) * 0.85f
+                val topMargin = 4.dp.toPx()
+                val center = Offset(w / 2f, radius + topMargin)
+
+                val startAngle = 200f
+                val endAngle = 340f
+                val centerAngle = 270f
+                val sweepLeft = centerAngle - startAngle
+                val sweepRight = endAngle - centerAngle
+
+                drawArc(
+                    color = Color(0xFF1E88E5),
+                    startAngle = startAngle,
+                    sweepAngle = sweepLeft,
+                    useCenter = false,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                drawArc(
+                    color = Color(0xFFE53935),
+                    startAngle = centerAngle,
+                    sweepAngle = sweepRight,
+                    useCenter = false,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                val innerR = radius * 0.55f
+                val outerR = radius * 0.98f
+                val leftTriAngle = centerAngle - 6f
+                val rightTriAngle = centerAngle + 6f
+
+                fun polar(angleDeg: Float, r: Float): Offset {
+                    val rad = Math.toRadians(angleDeg.toDouble()).toFloat()
+                    return Offset(
+                        center.x + kotlin.math.cos(rad) * r,
+                        center.y + kotlin.math.sin(rad) * r
+                    )
+                }
+
+                val triPath = Path().apply {
+                    moveTo(polar(centerAngle, innerR).x, polar(centerAngle, innerR).y)
+                    lineTo(polar(leftTriAngle, outerR).x, polar(leftTriAngle, outerR).y)
+                    lineTo(polar(rightTriAngle, outerR).x, polar(rightTriAngle, outerR).y)
+                    close()
+                }
+                drawPath(triPath, color = Color(0xFF4CAF50))
+
+                val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
+                val needleAngle = centerAngle + normalized * 45f
+                val needleRad = Math.toRadians(needleAngle.toDouble()).toFloat()
+                val needleLength = radius * 0.9f
+                val end = Offset(
+                    x = center.x + kotlin.math.cos(needleRad) * needleLength,
+                    y = center.y + kotlin.math.sin(needleRad) * needleLength
+                )
+
+                drawLine(
+                    color = Color(0xFFE53935),
+                    start = center,
+                    end = end,
+                    strokeWidth = 4.dp.toPx()
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StyledTopBar(
+    onBack: () -> Unit,
+    tunerOn: Boolean,
+    concertModeOn: Boolean,
+    onTunerClick: () -> Unit,
+    onConcertClick: () -> Unit
+) {
+    TopAppBar(
+        title = {},
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.Default.Home,
+                    contentDescription = "Volver",
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        },
+        actions = {
+            IconButton(onClick = onTunerClick) {
+                Box(modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Default.MusicNote,
+                        contentDescription = "Afinador",
+                        tint = Color.White,
+                        modifier = Modifier.matchParentSize()
+                    )
+                    if (tunerOn) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .background(Color(0xFFFF5252), RoundedCornerShape(10.dp))
+                        )
+                    }
+                }
+            }
+
+            IconButton(onClick = onConcertClick) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Concert",
+                    tint = if (concertModeOn) Color(0xFFFFC107) else Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color(0xFF111111),
+            titleContentColor = Color.White
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .border(0.5.dp, Color(0xFF1C1C1C))
+            .shadow(8.dp)
+    )
+}
+
+@Composable
+fun StyledLeftToolBar(
+    selectedTool: String,
+    penColor: Color,
+    strokeWidth: Float,
+    smoothingEnabled: Boolean,
+    onSelectTool: (String) -> Unit,
+    onColorClick: () -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.width(88.dp),
+        color = Color(0xFF1B1E23),
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            StyledToolButton(
+                icon = Icons.Default.TouchApp,
+                label = "Mover",
+                selected = selectedTool == "none",
+                onClick = { onSelectTool("none") }
+            )
+
+            StyledToolButton(
+                icon = Icons.Default.Edit,
+                label = "Lápiz",
+                selected = selectedTool == "pen",
+                onClick = { onSelectTool("pen") }
+            )
+
+            StyledToolButton(
+                icon = Icons.Default.Delete,
+                label = "Borrar",
+                selected = selectedTool == "eraser",
+                onClick = { onSelectTool("eraser") }
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            Spacer(Modifier.height(12.dp))
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = penColor,
+                modifier = Modifier
+                    .size(54.dp)
+                    .clickable { onColorClick() },
+                shadowElevation = 4.dp
+            ) {}
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                StyledToolButton(
+                    icon = Icons.Default.Remove,
+                    label = "Fino",
+                    selected = strokeWidth < 0.005f,
+                    onClick = { onStrokeChange(0.003f) },
+                    compact = true
+                )
+                StyledToolButton(
+                    icon = Icons.Default.HorizontalRule,
+                    label = "Medio",
+                    selected = strokeWidth in 0.005f..0.008f,
+                    onClick = { onStrokeChange(0.006f) },
+                    compact = true
+                )
+                StyledToolButton(
+                    icon = Icons.Default.DragHandle,
+                    label = "Grueso",
+                    selected = strokeWidth > 0.008f,
+                    onClick = { onStrokeChange(0.01f) },
+                    compact = true
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            Spacer(Modifier.height(12.dp))
+
+            StyledToolButton(
+                icon = Icons.Default.Tune,
+                label = "Suave",
+                selected = smoothingEnabled,
+                onClick = onToggleSmoothing
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            StyledToolButton(
+                icon = Icons.AutoMirrored.Filled.Undo,
+                label = "Undo",
+                selected = false,
+                onClick = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+fun StyledToolButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false
+) {
+    val bg = if (selected) Color(0xFF2E466E) else Color(0xFF272B33)
+    val tint = if (selected) Color(0xFF90CAF9) else Color(0xFFD0D3D8)
+    val size = if (compact) 42.dp else 56.dp
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = bg,
+        modifier = Modifier
+            .size(size)
+            .clickable { onClick() },
+        shadowElevation = if (selected) 6.dp else 2.dp
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
         }
     }
 }

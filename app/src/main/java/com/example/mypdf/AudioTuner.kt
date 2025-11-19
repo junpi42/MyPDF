@@ -25,18 +25,27 @@ class AudioTuner {
     val tuningState: StateFlow<TuningResult?> = _tuningState
 
     private val sampleRate = 44100
-    private val frameSize = 4096
+    private val frameSize = 2048 // ventana más corta → más reactivo
+
     private val bufferSize = AudioRecord.getMinBufferSize(
         sampleRate,
         AudioFormat.CHANNEL_IN_MONO,
         AudioFormat.ENCODING_PCM_16BIT
     ).coerceAtLeast(frameSize)
 
-    private val baseMagnitudeThreshold = 0.010
-    private val noisyMagnitudeThreshold = 0.030
+    // Umbrales de RMS (se aplican ANTES de cualquier normalización)
+    private val baseRmsThreshold = 0.003
+    private val noisyRmsThreshold = 0.010
+
+    // Rango de pitch que queremos detectar
+    private val minPitch = 70.0   // Hz
+    private val maxPitch = 1200.0 // Hz
 
     private var hpf: Biquad? = null
     private var lpf: Biquad? = null
+
+    // Para suavizar la frecuencia entre frames
+    private var lastFrequency = 0.0
 
     companion object {
         private const val TAG = "AudioTuner"
@@ -54,6 +63,8 @@ class AudioTuner {
                     AudioFormat.ENCODING_PCM_16BIT,
                     bufferSize
                 )
+                // Puedes probar VOICE_RECOGNITION o UNPROCESSED (si el dispositivo lo soporta)
+                // para ver si mejora el comportamiento.
             } catch (e: Exception) {
                 reportError(stage = "init", e = e, details = "bufferSize=$bufferSize, sampleRate=$sampleRate")
                 return
@@ -65,6 +76,7 @@ class AudioTuner {
             }
 
             configureFilters()
+            lastFrequency = 0.0
 
             try {
                 audioRecord?.startRecording()
@@ -86,12 +98,14 @@ class AudioTuner {
                     if (read <= 0) continue
 
                     val frequency = try {
-                        detectFrequency(buffer, read)
+                        val rawFreq = detectFrequency(buffer, read)
+                        smoothFrequency(rawFreq)
                     } catch (e: Exception) {
                         reportError(stage = "detect", e = e)
                         break
                     }
-                    if (frequency <= 0) continue
+
+                    if (frequency <= 0.0) continue
 
                     val result = try {
                         analyzeFrequency(frequency)
@@ -116,6 +130,8 @@ class AudioTuner {
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
+        lastFrequency = 0.0
+
         if (clearState) {
             _tuningState.value = null
         }
@@ -148,71 +164,147 @@ class AudioTuner {
         }
     }
 
+    /**
+     * Suaviza la frecuencia de frame a frame para que el afinador no “salte”.
+     */
+    private fun smoothFrequency(raw: Double): Double {
+        if (!raw.isFinite() || raw <= 0.0) {
+            lastFrequency = 0.0
+            return 0.0
+        }
+        if (lastFrequency <= 0.0) {
+            lastFrequency = raw
+            return raw
+        }
+
+        // Opcional: descartar cambios absurdos (ruido) muy grandes
+        val ratio = raw / lastFrequency
+        if (ratio < 0.5 || ratio > 2.0) {
+            // Cambio > 1 octava en un frame → probablemente ruido, mantenemos valor previo
+            return lastFrequency
+        }
+
+        val alpha = 0.3 // 0.1 muy suave, 0.5 más rápido
+        val smoothed = alpha * raw + (1 - alpha) * lastFrequency
+        lastFrequency = smoothed
+        return smoothed
+    }
+
     private fun detectFrequency(buffer: ShortArray, size: Int): Double {
         val sr = sampleRate.toDouble()
-        val audio = FloatArray(size) { buffer[it].toFloat() / Short.MAX_VALUE }
+        val n = size.coerceAtMost(buffer.size)
+        if (n <= 0) return 0.0
 
+        val audio = FloatArray(n) { buffer[it].toFloat() / Short.MAX_VALUE }
+
+        // Filtros si estamos en modo ruidoso
         if (_noisyEnvironment.value) {
             hpf?.processInPlace(audio)
             lpf?.processInPlace(audio)
         }
 
-        val threshold = if (_noisyEnvironment.value) noisyMagnitudeThreshold else baseMagnitudeThreshold
-        val magnitude = audio.sumOf { abs(it).toDouble() } / size
-        if (magnitude < threshold) return 0.0
+        // 1) Quitamos DC
+        var mean = 0f
+        for (i in 0 until n) {
+            mean += audio[i]
+        }
+        mean /= n
+        for (i in 0 until n) {
+            audio[i] -= mean
+        }
 
-        for (i in 0 until size) {
-            val w = 0.5f * (1f - cos(2f * Math.PI.toFloat() * i / (size - 1)))
+        // 2) Calculamos RMS en señal con DC eliminado (sin normalizar)
+        var sumSq = 0.0
+        for (i in 0 until n) {
+            val v = audio[i].toDouble()
+            sumSq += v * v
+        }
+        val rms = sqrt(sumSq / n)
+        val threshold = if (_noisyEnvironment.value) noisyRmsThreshold else baseRmsThreshold
+        if (rms < threshold) return 0.0
+
+        // 3) Normalización suave: ajustar nivel, pero sin pasarnos
+        val targetRms = 0.1
+        val gain = (targetRms / rms).toFloat().coerceIn(0.5f, 10f)
+        for (i in 0 until n) {
+            audio[i] *= gain
+        }
+
+        // 4) Ventana de Hann
+        for (i in 0 until n) {
+            val w = 0.5f * (1f - cos(2f * Math.PI.toFloat() * i / (n - 1)))
             audio[i] *= w
         }
 
-        val minLag = (sr / 1200.0).toInt().coerceAtLeast(20)
-        val maxLag = (sr / 80.0).toInt().coerceAtMost(size / 2)
+        // 5) Búsqueda del periodo (lag) por autocorrelación normalizada
+        val minLag = (sr / maxPitch).toInt().coerceAtLeast(20)
+        val maxLag = (sr / minPitch).toInt().coerceAtMost(n / 2)
+
+        if (minLag >= maxLag) return 0.0
 
         var bestLag = -1
         var bestCorr = Double.NEGATIVE_INFINITY
 
         for (lag in minLag..maxLag) {
-            var corr = 0.0
-            var i = 0
-            val end = size - lag
-            while (i < end) {
-                corr += audio[i] * audio[i + lag]
-                i++
-            }
+            val corr = normalizedCorrelationAt(audio, lag)
             if (corr > bestCorr) {
                 bestCorr = corr
                 bestLag = lag
             }
         }
-        if (bestLag <= 0) return 0.0
 
-        val y0 = correlationAt(audio, bestLag - 1)
-        val y1 = correlationAt(audio, bestLag)
-        val y2 = correlationAt(audio, bestLag + 1)
-        val denom = (2 * (y0 - 2 * y1 + y2))
-        val delta = if (denom != 0.0) (y0 - y2) / denom else 0.0
+        // Correlación demasiado baja = probablemente ruido
+        if (bestLag <= 0 || !bestCorr.isFinite() || bestCorr < 0.35) {
+            return 0.0
+        }
+
+        // 6) Interpolación parabólica alrededor del máximo
+        val y0 = normalizedCorrelationAt(audio, bestLag - 1)
+        val y1 = normalizedCorrelationAt(audio, bestLag)
+        val y2 = normalizedCorrelationAt(audio, bestLag + 1)
+
+        val denom = 2 * (y0 - 2 * y1 + y2)
+        val delta = if (denom != 0.0 && y0.isFinite() && y1.isFinite() && y2.isFinite()) {
+            (y0 - y2) / denom
+        } else {
+            0.0
+        }
+
         val refinedLag = bestLag.toDouble() + delta.coerceIn(-1.0, 1.0)
-
         if (!refinedLag.isFinite() || refinedLag <= 0.0) return 0.0
+
         val freq = sr / refinedLag
         return if (freq.isFinite() && freq > 0.0) freq else 0.0
     }
 
-    private fun correlationAt(x: FloatArray, lag: Int): Double {
+    /**
+     * Autocorrelación normalizada (NCCF).
+     */
+    private fun normalizedCorrelationAt(x: FloatArray, lag: Int): Double {
         if (lag <= 0 || lag >= x.size) return Double.NEGATIVE_INFINITY
-        var s = 0.0
+
+        var sumNum = 0.0
+        var sumX2 = 0.0
+        var sumY2 = 0.0
         val end = x.size - lag
+
         var i = 0
         while (i < end) {
-            s += x[i] * x[i + lag]
+            val xi = x[i].toDouble()
+            val yi = x[i + lag].toDouble()
+            sumNum += xi * yi
+            sumX2 += xi * xi
+            sumY2 += yi * yi
             i++
         }
-        return s
+
+        val denom = sqrt(sumX2 * sumY2)
+        if (denom <= 0.0) return Double.NEGATIVE_INFINITY
+        return sumNum / denom
     }
 
     private fun analyzeFrequency(frequency: Double): TuningResult {
-        if (!frequency.isFinite() || frequency < 80 || frequency > 1200) {
+        if (!frequency.isFinite() || frequency < minPitch || frequency > maxPitch) {
             return TuningResult(false, frequency, "---", 0.0)
         }
         val (noteName, targetFreq) = findClosestNote(frequency)
@@ -227,11 +319,13 @@ class AudioTuner {
         val base = _baseFrequency.value
         val semitonesFromBase = 12 * log2(frequency / base)
         val closestSemitone = semitonesFromBase.roundToInt()
+
         val octave = 4 + Math.floorDiv(closestSemitone, 12)
         val noteIndex = Math.floorMod(9 + closestSemitone, 12)
         val noteNames = listOf("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")
         val noteName = noteNames[noteIndex]
         val targetFreq = base * 2.0.pow(closestSemitone / 12.0)
+
         return Pair("$noteName$octave", targetFreq)
     }
 
