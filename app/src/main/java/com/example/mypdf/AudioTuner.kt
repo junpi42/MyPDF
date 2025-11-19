@@ -24,7 +24,6 @@ class AudioTuner {
     private val _tuningState = MutableStateFlow<TuningResult?>(null)
     val tuningState: StateFlow<TuningResult?> = _tuningState
 
-    // Parámetros de audio
     private val sampleRate = 44100
     private val frameSize = 2048 // ventana más corta → más reactivo
 
