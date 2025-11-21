@@ -13,6 +13,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
@@ -284,15 +286,100 @@ fun PdfViewerScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
         Box(Modifier.fillMaxSize()) {
 
-            // ===== contenido PDF con zoom/pan =====
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = topBarHeight)
-                    .then(
-                        if (selectedTool == "none") {
-                            Modifier.pointerInput(selectedTool) {
-                                detectTransformGestures { centroid, pan, zoom, _ ->
+            if (concertModeOn) {
+                // ===== MODO CONCIERTO: PDF a pantalla completa con zoom/pan =====
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTransformGestures { centroid, pan, zoom, _ ->
+                                isPinching = zoom != 1f
+
+                                val newScale = (scale * zoom).coerceIn(1f, 4f)
+
+                                if (kotlin.math.abs(newScale - scale) > 0.001f) {
+                                    val centerX = size.width / 2f
+                                    val centerY = size.height / 2f
+
+                                    val focusX = (centroid.x - centerX - offsetX) / scale
+                                    val focusY = (centroid.y - centerY - offsetY) / scale
+
+                                    scale = newScale
+
+                                    offsetX = centroid.x - centerX - focusX * scale
+                                    offsetY = centroid.y - centerY - focusY * scale
+                                }
+
+                                if (scale > 1f) {
+                                    val maxX = (size.width * (scale - 1f)) / 2f
+                                    val maxY = (size.height * (scale - 1f)) / 2f
+                                    offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                    offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                                } else {
+                                    scale = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                }
+                            }
+                        }
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        userScrollEnabled = !isPinching,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offsetX,
+                                translationY = offsetY
+                            ),
+                        contentPadding = PaddingValues(bottom = 16.dp)
+                    ) {
+                        items(pageCount) { index ->
+                            val bmp = pageBitmaps.getOrNull(index)
+                            PdfPageItem(
+                                index = index,
+                                bitmap = bmp,
+                                showLoadingLabel = bmp == null,
+                                editMode = false,
+                                annotations = annotations.getOrPut(index) { PageAnnotations(index) },
+                                selectedTool = "none",
+                                penColor = penColor,
+                                strokeWidth = strokeWidth,
+                                smoothingEnabled = smoothingEnabled,
+                                onPathAdded = {},
+                                onErase = {},
+                                darkMode = darkMode
+                            )
+                            Spacer(Modifier.height(12.dp))
+                        }
+                    }
+                }
+
+                // Botón flotante de casa para volver a edición
+                IconButton(
+                    onClick = { concertModeOn = false },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Home,
+                        contentDescription = strings().backDescription,
+                        tint = if (darkMode) Color.White else Color(0xFF111111)
+                    )
+                }
+            } else {
+                // ===== MODO EDICIÓN ORIGINAL =====
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = topBarHeight)
+                        .then(
+                            if (selectedTool == "none") {
+                                Modifier.pointerInput(selectedTool) {
+                                    detectTransformGestures { centroid, pan, zoom, _ ->
                                     // si hay zoom diferente de 1, consideramos pinch
                                     isPinching = zoom != 1f
 
@@ -325,139 +412,134 @@ fun PdfViewerScreen(
                             }
                         } else Modifier
                     )
-            ) {
-                LazyColumn(
-                    state = listState,
-                    // si estás pellizcando, desactiva scroll para evitar saltos
-                    userScrollEnabled = !isPinching,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offsetX,
-                            translationY = offsetY
-                        ),
-                    contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
-                    items(pageCount) { index ->
-                        val bmp = pageBitmaps.getOrNull(index)
-                        PdfPageItem(
-                            index = index,
-                            bitmap = bmp,
-                            showLoadingLabel = bmp == null,
-                            editMode = true,
-                            annotations = annotations.getOrPut(index) { PageAnnotations(index) },
-                            selectedTool = selectedTool,
-                            penColor = penColor,
-                            strokeWidth = strokeWidth,
-                            smoothingEnabled = smoothingEnabled,
-                            onPathAdded = { path ->
-                                annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
-                                scheduleSave()
-                            },
-                            onErase = { eraserPoints ->
-                                val page = annotations.getOrPut(index) { PageAnnotations(index) }
-                                val toRemove = mutableSetOf<Int>()
-                                page.paths.forEachIndexed { pIdx, p ->
-                                    val pts = p.points
-                                    if (pts.size < 2) return@forEachIndexed
-                                    var hit = false
-                                    for (i in 0 until pts.size - 1) {
-                                        val a = pts[i]; val b = pts[i + 1]
-                                        if (eraserPoints.any { e ->
-                                                distancePointToSegment(e, a, b) <= (strokeWidth * 100)
-                                            }
-                                        ) {
-                                            hit = true; break
-                                        }
-                                    }
-                                    if (hit) toRemove.add(pIdx)
-                                }
-                                if (toRemove.isNotEmpty()) {
-                                    toRemove.sortedDescending()
-                                        .forEach { page.paths.removeAt(it) }
+                    LazyColumn(
+                        state = listState,
+                        userScrollEnabled = !isPinching,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offsetX,
+                                translationY = offsetY
+                            ),
+                        contentPadding = PaddingValues(bottom = 16.dp)
+                    ) {
+                        items(pageCount) { index ->
+                            val bmp = pageBitmaps.getOrNull(index)
+                            PdfPageItem(
+                                index = index,
+                                bitmap = bmp,
+                                showLoadingLabel = bmp == null,
+                                editMode = true,
+                                annotations = annotations.getOrPut(index) { PageAnnotations(index) },
+                                selectedTool = selectedTool,
+                                penColor = penColor,
+                                strokeWidth = strokeWidth,
+                                smoothingEnabled = smoothingEnabled,
+                                onPathAdded = { path ->
+                                    annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                     scheduleSave()
-                                }
-                            },
-                            darkMode = darkMode
-                        )
-                        Spacer(Modifier.height(12.dp))
+                                },
+                                onErase = { eraserPoints ->
+                                    val page = annotations.getOrPut(index) { PageAnnotations(index) }
+                                    val toRemove = mutableSetOf<Int>()
+                                    page.paths.forEachIndexed { pIdx, p ->
+                                        val pts = p.points
+                                        if (pts.size < 2) return@forEachIndexed
+                                        var hit = false
+                                        for (i in 0 until pts.size - 1) {
+                                            val a = pts[i]; val b = pts[i + 1]
+                                            if (eraserPoints.any { e ->
+                                                    distancePointToSegment(e, a, b) <= (strokeWidth * 100)
+                                                }
+                                            ) {
+                                                hit = true; break
+                                            }
+                                        }
+                                        if (hit) toRemove.add(pIdx)
+                                    }
+                                    if (toRemove.isNotEmpty()) {
+                                        toRemove.sortedDescending()
+                                            .forEach { page.paths.removeAt(it) }
+                                        scheduleSave()
+                                    }
+                                },
+                                darkMode = darkMode
+                            )
+                            Spacer(Modifier.height(12.dp))
+                        }
                     }
                 }
-            }
 
-            // ===== barra superior =====
-            StyledTopBar(
-                onBack = onBack,
-                tunerOn = tunerOn,
-                concertModeOn = concertModeOn,
-                onTunerClick = {
-                    if (!tunerOn) {
-                        ensureMicPermission { tunerOn = true }
-                    } else {
-                        tunerOn = false
+                // Barra superior completa con botón de volver y modo concierto
+                StyledTopBar(
+                    onBack = onBack,
+                    tunerOn = tunerOn,
+                    concertModeOn = concertModeOn,
+                    onTunerClick = {
+                        if (!tunerOn) {
+                            ensureMicPermission { tunerOn = true }
+                        } else {
+                            tunerOn = false
+                        }
+                    },
+                    onConcertClick = { concertModeOn = !concertModeOn },
+                    darkMode = darkMode,
+                )
 
-                    }
-                },
-                onConcertClick = { concertModeOn = !concertModeOn },
-                darkMode = darkMode,
+                // Afinador pequeño sólo en modo edición
+                if (tunerOn) {
+                    TunnerSmall(
+                        tunner = tunner,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = (topBarHeight - 44.dp) / 2)
+                            .fillMaxWidth(0.7f)
+                            .height(44.dp),
+                        onClick = { showTunerSettings = true }
+                    )
+                }
 
-            )
-
-            // banner afinador
-            if (tunerOn) {
-                TunnerSmall(
-                    tunner = tunner,
+                // Barra lateral de herramientas sólo en modo edición
+                StyledLeftToolBar(
+                    selectedTool = selectedTool,
+                    penColor = penColor,
+                    strokeWidth = strokeWidth,
+                    smoothingEnabled = smoothingEnabled,
+                    onSelectTool = { selectedTool = it },
+                    onColorClick = { showColorPicker = true },
+                    onStrokeChange = { strokeWidth = it },
+                    onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
+                    onUndo = {
+                        val currentPage = listState.firstVisibleItemIndex
+                        annotations[currentPage]?.paths?.removeLastOrNull()
+                        scheduleSave()
+                    },
+                    darkMode = darkMode,
+                    language = language,
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = (topBarHeight - 44.dp) / 2)
-                        .fillMaxWidth(0.7f)
-                        .height(44.dp),
-                    onClick = { showTunerSettings = true }
+                        .align(Alignment.TopStart)
+                        .padding(top = topBarHeight)
+                        .fillMaxHeight()
                 )
 
+                if (showColorPicker) {
+                    ColorPickerDialog(
+                        currentColor = penColor,
+                        onColorSelected = { penColor = it },
+                        onDismiss = { showColorPicker = false }
+                    )
+                }
+
+                if (showTunerSettings) {
+                    TunerSettingsDialog(
+                        tuner = tunner,
+                        onDismiss = { showTunerSettings = false }
+                    )
+                }
             }
-
-            // barra izquierda
-            StyledLeftToolBar(
-                selectedTool = selectedTool,
-                penColor = penColor,
-                strokeWidth = strokeWidth,
-                smoothingEnabled = smoothingEnabled,
-                onSelectTool = { selectedTool = it },
-                onColorClick = { showColorPicker = true },
-                onStrokeChange = { strokeWidth = it },
-                onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
-                onUndo = {
-                    val currentPage = listState.firstVisibleItemIndex
-                    annotations[currentPage]?.paths?.removeLastOrNull()
-                    scheduleSave()
-                },
-                darkMode = darkMode,
-                language = language,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = topBarHeight)
-                    .fillMaxHeight()
-            )
-
-            if (showColorPicker) {
-                ColorPickerDialog(
-                    currentColor = penColor,
-                    onColorSelected = { penColor = it },
-                    onDismiss = { showColorPicker = false }
-                )
-            }
-
-            if (showTunerSettings) {
-                TunerSettingsDialog(
-                    tuner = tunner,
-                    onDismiss = { showTunerSettings = false }
-                )
-            }
-
-
         }
     }
 }
