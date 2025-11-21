@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun ColorPickerDialog(
@@ -171,13 +172,22 @@ fun SettingsDialog(
     onDismiss: () -> Unit
 ) {
     val s = strings()
+    val context = LocalContext.current
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (e: Exception) {
+            "Unknown"
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(12.dp))
-                Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                Text(s.settingsTitle, style = MaterialTheme.typography.headlineSmall)
             }
         },
         text = {
@@ -211,7 +221,7 @@ fun SettingsDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Language, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.width(16.dp))
-                        Text("Language", style = MaterialTheme.typography.titleMedium)
+                        Text(s.languageLabel, style = MaterialTheme.typography.titleMedium)
                     }
                     Button(onClick = onToggleLanguage) {
                         Text(if (language == Language.EN) "English" else "Español")
@@ -225,14 +235,14 @@ fun SettingsDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.GridView, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.width(16.dp))
-                        Text("Grid Size", style = MaterialTheme.typography.titleMedium)
+                        Text(s.gridSize, style = MaterialTheme.typography.titleMedium)
                     }
                     Spacer(Modifier.height(8.dp))
                     Slider(
                         value = gridScale,
                         onValueChange = onGridScaleChange,
                         valueRange = 0.5f..1.5f,
-                        steps = 9
+                        steps = 2
                     )
                 }
                 
@@ -244,7 +254,7 @@ fun SettingsDialog(
                     Spacer(Modifier.width(16.dp))
                     Column {
                         Text("PentagramApp", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        Text("v1.0.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("v$versionName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
