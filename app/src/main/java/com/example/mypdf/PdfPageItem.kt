@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
@@ -97,11 +98,13 @@ fun PdfPageItem(
         val pageBg = if (darkMode) Color(0xFF303030) else MaterialTheme.colorScheme.surface
         val canvasBg = if (darkMode) Color(0xFFFAFAFA) else MaterialTheme.colorScheme.surface
 
-        Box(
-            Modifier
+        Surface(
+            modifier = Modifier
                 .fillMaxWidth()
-                .background(pageBg)
-                .padding(8.dp)
+                .padding(8.dp),
+            shape = MaterialTheme.shapes.small,
+            shadowElevation = 4.dp,
+            color = pageBg
         ) {
             key(redrawTrigger) {
                 Canvas(

@@ -29,6 +29,7 @@ interface AppStrings {
     val cannotCreateCategory: String
     val cannotCreateFolder: String
     val cannotRename: String
+    val deleteError: String
     val confirmDeleteTitle: String
     fun confirmDeleteMessage(isFolder: Boolean): String
 
@@ -82,6 +83,7 @@ object StringsEs : AppStrings {
     override val cannotCreateCategory = "No se pudo crear la categoría"
     override val cannotCreateFolder = "No se pudo crear carpeta"
     override val cannotRename = "No se pudo renombrar"
+    override val deleteError = "No se pudo eliminar"
     override val confirmDeleteTitle = "Eliminar"
     override fun confirmDeleteMessage(isFolder: Boolean): String =
         if (isFolder) "¿Seguro que quieres eliminar la carpeta? Esta acción no se puede deshacer."
@@ -132,6 +134,7 @@ object StringsEn : AppStrings {
     override val cannotCreateCategory = "Could not create category"
     override val cannotCreateFolder = "Could not create folder"
     override val cannotRename = "Could not rename"
+    override val deleteError = "Could not delete"
     override val confirmDeleteTitle = "Delete"
     override fun confirmDeleteMessage(isFolder: Boolean): String =
         if (isFolder) "Are you sure you want to delete the folder? This action cannot be undone."

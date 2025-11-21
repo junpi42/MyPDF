@@ -281,7 +281,7 @@ fun PdfViewerScreen(
     }
 
     val topBarHeight = 64.dp
-    val screenBg = if (darkMode) Color(0xFF0E0F12) else Color(0xFFF5F6F8)
+    val screenBg = MaterialTheme.colorScheme.background
 
     Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
         Box(Modifier.fillMaxSize()) {
@@ -510,6 +510,7 @@ fun PdfViewerScreen(
                     smoothingEnabled = smoothingEnabled,
                     onSelectTool = { selectedTool = it },
                     onColorClick = { showColorPicker = true },
+                    onColorChanged = { penColor = it },
                     onStrokeChange = { strokeWidth = it },
                     onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
                     onUndo = {
