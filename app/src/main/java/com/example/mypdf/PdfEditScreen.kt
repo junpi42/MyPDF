@@ -7,7 +7,13 @@ import java.io.File
 fun PdfEditScreen(
     file: File,
     onBack: () -> Unit,
-    isDarkMode: Boolean
+    isDarkMode: Boolean,
+    language: Language
 ) {
-    PdfViewerScreen(file = file, onBack = onBack, isDarkMode = isDarkMode)
+    PdfViewerScreen(
+        file = file,
+        onBack = onBack,
+        isDarkMode = isDarkMode,
+        language = language
+    )
 }
