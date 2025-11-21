@@ -10,7 +10,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,8 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -167,6 +164,7 @@ fun LibraryScreen(
     // Long-press actions
     var fileToEdit by remember { mutableStateOf<File?>(null) }
     var isDirTarget by remember { mutableStateOf(false) }
+    var showFileOptionsDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
@@ -354,7 +352,7 @@ fun LibraryScreen(
                             TextButton(
                                 onClick = { showNewCategoryDialog = true },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                colors = ButtonDefaults.textButtonColors(
                                     contentColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
@@ -523,7 +521,7 @@ fun LibraryScreen(
                                             fileToEdit = dir
                                             isDirTarget = true
                                             renameText = dir.name
-                                            showRenameDialog = true
+                                            showFileOptionsDialog = true
                                         }
                                     )
                                 }
@@ -540,7 +538,7 @@ fun LibraryScreen(
                                             fileToEdit = f
                                             isDirTarget = false
                                             renameText = f.nameWithoutExtension
-                                            showRenameDialog = true
+                                            showFileOptionsDialog = true
                                         }
                                     )
                                 }
@@ -606,6 +604,39 @@ fun LibraryScreen(
             },
             confirmText = s.create,
             cancelText = s.cancel
+        )
+    }
+
+    if (showFileOptionsDialog && fileToEdit != null) {
+        AlertDialog(
+            onDismissRequest = { showFileOptionsDialog = false },
+            title = { Text(if (isDirTarget) fileToEdit?.name ?: "" else fileToEdit?.nameWithoutExtension ?: "") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            showFileOptionsDialog = false
+                            showRenameDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(s.rename, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                    }
+                    TextButton(
+                        onClick = {
+                            showFileOptionsDialog = false
+                            showDeleteDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(s.delete, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showFileOptionsDialog = false }) { Text(s.cancel) }
+            }
         )
     }
 

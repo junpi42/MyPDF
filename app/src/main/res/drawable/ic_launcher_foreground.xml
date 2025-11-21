@@ -1,8 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+
+    <!-- Placeholder vector drawable convertido desde un SVG; reemplaza el pathData
+         por tu propio SVG convertido si quieres el icono real. -->
     <path
         android:fillColor="#FFFFFFFF"
         android:pathData="M12,2 L15,8 L22,9 L17,14 L18,21 L12,18 L6,21 L7,14 L2,9 L9,8 Z"/>
