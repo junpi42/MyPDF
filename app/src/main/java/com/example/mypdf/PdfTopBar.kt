@@ -1,26 +1,23 @@
 package com.example.mypdf
 
+
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
@@ -34,61 +31,63 @@ fun StyledTopBar(
     onConcertClick: () -> Unit,
     darkMode: Boolean
 ) {
-    val barBg = if (darkMode) Color(0xFF111111) else Color(0xFFF0F1F3)
-    val iconTint = if (darkMode) Color.White else Color(0xFF111111)
     val s = strings()
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val isTablet = config.screenWidthDp > 600
+    val iconScale = if (isTablet) 1.5f else 1.0f
+    val baseIconSize = 24.dp * iconScale
+    val actionIconSize = 28.dp * iconScale
+    val playIconSize = 32.dp * iconScale
 
     TopAppBar(
         title = {},
         navigationIcon = {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp * (if (isTablet) 1.2f else 1f))) {
                 Icon(
                     Icons.Default.Home,
                     contentDescription = s.backDescription,
-                    tint = iconTint,
-                    modifier = Modifier.size(30.dp)
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(baseIconSize)
                 )
             }
         },
         actions = {
-            IconButton(onClick = onTunerClick) {
-                Box(modifier = Modifier.size(28.dp)) {
+            // Tuner Button
+            IconButton(onClick = onTunerClick, modifier = Modifier.size(48.dp * (if (isTablet) 1.2f else 1f))) {
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.MusicNote,
                         contentDescription = s.tunerDescription,
-                        tint = iconTint,
-                        modifier = Modifier.matchParentSize()
+                        tint = if (tunerOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(actionIconSize)
                     )
                     if (tunerOn) {
                         Box(
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .height(4.dp)
-                                .background(Color(0xFFFF5252), RoundedCornerShape(10.dp))
+                                .align(Alignment.TopEnd)
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .size(8.dp * iconScale)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error)
                         )
                     }
                 }
             }
 
-            IconButton(onClick = onConcertClick) {
+            // Concert Mode Button
+            IconButton(onClick = onConcertClick, modifier = Modifier.size(48.dp * (if (isTablet) 1.2f else 1f))) {
                 Icon(
                     Icons.Default.PlayArrow,
                     contentDescription = s.concertDescription,
-                    tint = if (concertModeOn) Color(0xFFFFC107) else iconTint,
-                    modifier = Modifier.size(32.dp)
+                    tint = if (concertModeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(playIconSize)
                 )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = barBg,
-            titleContentColor = iconTint,
-            navigationIconContentColor = iconTint,
-            actionIconContentColor = iconTint
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .border(0.5.dp, if (darkMode) Color(0xFF1C1C1C) else Color(0xFFE0E0E0))
+        modifier = Modifier.fillMaxWidth().height(if (isTablet) 80.dp else 64.dp)
     )
 }
