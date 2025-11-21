@@ -71,20 +71,62 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            var darkMode by rememberSaveable { mutableStateOf(false) }
-            var isEnglish by rememberSaveable { mutableStateOf(false) }
+            val context = LocalContext.current
+            // Load settings or null if missing
+            val initialSettings = remember { SettingsManager.loadSettings(context) }
+            
+            var showOnboarding by remember { mutableStateOf(initialSettings == null) }
+            
+            // State initialized from settings or defaults
+            var darkMode by remember { mutableStateOf(initialSettings?.isDarkMode ?: false) }
+            var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
+            var gridScale by remember { mutableStateOf(initialSettings?.gridScale ?: 1.0f) }
+            var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
 
-            val language = isEnglish.toLanguage()
+            // Helper to save settings
+            fun save() {
+                SettingsManager.saveSettings(
+                    context,
+                    AppSettings(
+                        language = if (language == Language.ES) "ES" else "EN",
+                        isDarkMode = darkMode,
+                        isDaltonic = isDaltonic,
+                        gridScale = gridScale
+                    )
+                )
+            }
 
             MyPDFTheme(darkTheme = darkMode) {
                 ProvideStrings(language = language) {
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        AppRoot(
-                            isDarkMode = darkMode,
-                            onToggleDarkMode = { darkMode = !darkMode },
-                            language = language,
-                            onToggleLanguage = { isEnglish = !isEnglish }
-                        )
+                        if (showOnboarding) {
+                            // Determine system language for initial onboarding
+                            val systemLang = java.util.Locale.getDefault().language
+                            val initialLang = if (systemLang == "es") Language.ES else Language.EN
+                            
+                            OnboardingDialog(
+                                initialLanguage = initialLang,
+                                onFinish = { lang, dark, daltonic ->
+                                    language = lang
+                                    darkMode = dark
+                                    isDaltonic = daltonic
+                                    save()
+                                    showOnboarding = false
+                                }
+                            )
+                        } else {
+                            AppRoot(
+                                isDarkMode = darkMode,
+                                onToggleDarkMode = { darkMode = !darkMode; save() },
+                                language = language,
+                                onToggleLanguage = { 
+                                    language = if (language == Language.EN) Language.ES else Language.EN
+                                    save() 
+                                },
+                                gridScale = gridScale,
+                                onGridScaleChange = { gridScale = it; save() }
+                            )
+                        }
                     }
                 }
             }
@@ -97,7 +139,9 @@ private fun AppRoot(
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
     language: Language,
-    onToggleLanguage: () -> Unit
+    onToggleLanguage: () -> Unit,
+    gridScale: Float,
+    onGridScaleChange: (Float) -> Unit
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
@@ -113,7 +157,9 @@ private fun AppRoot(
                     isDarkMode = isDarkMode,
                     onToggleDarkMode = onToggleDarkMode,
                     language = language,
-                    onToggleLanguage = onToggleLanguage
+                    onToggleLanguage = onToggleLanguage,
+                    gridScale = gridScale,
+                    onGridScaleChange = onGridScaleChange
                 )
             } else {
                 PdfEditScreen(
@@ -134,7 +180,9 @@ fun LibraryScreen(
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
     language: Language,
-    onToggleLanguage: () -> Unit
+    onToggleLanguage: () -> Unit,
+    gridScale: Float,
+    onGridScaleChange: (Float) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -153,7 +201,7 @@ fun LibraryScreen(
     var sortAsc by rememberSaveable { mutableStateOf(false) }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var gridScale by rememberSaveable { mutableStateOf(1.0f) }
+    // var gridScale by rememberSaveable { mutableStateOf(1.0f) } // Now passed from parent
 
     var showNewCategoryDialog by remember { mutableStateOf(false) }
     var newCategoryName by remember { mutableStateOf("") }
@@ -187,11 +235,10 @@ fun LibraryScreen(
     val effectiveSidebarWidth = if (sidebarWidth == 0.dp) 80.dp else sidebarWidth
     val isCompactSidebar = effectiveSidebarWidth < 200.dp
 
-    val gridMinCell = when {
-        isTablet -> 220.dp
-        isLargePhone -> 180.dp
-        else -> 160.dp
-    } * gridScale
+    val minColWidth = 180
+    val maxCols = (screenWidthDp / minColWidth).coerceAtLeast(1)
+    val t = ((gridScale - 0.5f) / 1.0f).coerceIn(0f, 1f)
+    val columns = (1 + (maxCols - 1) * (1.0f - t)).toInt().coerceAtLeast(1)
 
     suspend fun ensureDefaultCategory(): File {
         val (rootDirs, _) = listLibraryFolder(context, "")
@@ -339,7 +386,13 @@ fun LibraryScreen(
                             name = cat.name,
                             selected = selected,
                             compact = isCompactSidebar,
-                            onClick = { selectedCategory = cat }
+                            onClick = { selectedCategory = cat },
+                            onLongClick = {
+                                fileToEdit = cat
+                                isDirTarget = true
+                                renameText = cat.name
+                                showFileOptionsDialog = true
+                            }
                         )
                     }
                     item {
@@ -382,7 +435,7 @@ fun LibraryScreen(
                     ) {
                         Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Settings", style = MaterialTheme.typography.bodyMedium)
+                        Text(s.settingsTitle, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -506,7 +559,7 @@ fun LibraryScreen(
 
                         else -> {
                             LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = gridMinCell),
+                                columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(columns),
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -706,7 +759,7 @@ fun LibraryScreen(
             language = language,
             onToggleLanguage = onToggleLanguage,
             gridScale = gridScale,
-            onGridScaleChange = { gridScale = it },
+            onGridScaleChange = onGridScaleChange,
             onDismiss = { showSettingsDialog = false }
         )
     }
@@ -714,19 +767,21 @@ fun LibraryScreen(
 
 // ====== UI Components ======
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CategoryItem(name: String, selected: Boolean, compact: Boolean, onClick: () -> Unit) {
+private fun CategoryItem(name: String, selected: Boolean, compact: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent
     val contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
 
     Surface(
-        onClick = onClick,
         shape = MaterialTheme.shapes.medium, // Pill shape-ish
         color = containerColor,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
     ) {
         Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
+            modifier = Modifier
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(vertical = 12.dp, horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start
         ) {
