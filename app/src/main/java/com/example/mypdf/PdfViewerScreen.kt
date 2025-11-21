@@ -1,5 +1,10 @@
 package com.example.mypdf
 
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
@@ -15,10 +20,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.*
@@ -29,11 +32,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
 import androidx.compose.runtime.key
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -42,13 +47,14 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+
+
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.draw.shadow
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -66,6 +72,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.core.graphics.createBitmap
 
 private const val TAG = "PDF_TIMING"
 
@@ -83,29 +90,35 @@ data class PageAnnotations(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PdfViewerScreen(file: File, onBack: () -> Unit) {
+fun PdfViewerScreen(
+    file: File,
+    onBack: () -> Unit,
+    isDarkMode: Boolean
+) {
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
 
     val tunner = remember { AudioTuner() }
 
+    // ===== MODO DIA / NOCHE =====
+    val darkMode = isDarkMode
+
     var selectedTool by remember { mutableStateOf("none") }
     var penColor by remember { mutableStateOf(Color.Red) }
-    var strokeWidth by remember { mutableStateOf(0.006f) }
+    var strokeWidth by remember { mutableFloatStateOf(0.006f) }
     var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
 
+    // afinador
     var tunerOn by remember { mutableStateOf(false) }
     var concertModeOn by remember { mutableStateOf(false) }
-
     var showTunerSettings by remember { mutableStateOf(false) }
-    var showNeedleTuner by remember { mutableStateOf(false) }
 
     // zoom / pan
-    var scale by remember { mutableStateOf(1f) }
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
     var isPinching by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -145,12 +158,13 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         }
     }
 
-    // status bar normal
-    DisposableEffect(Unit) {
+    // status bar según modo
+    DisposableEffect(darkMode) {
         WindowCompat.setDecorFitsSystemWindows(activity.window, true)
         val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
-        controller.isAppearanceLightStatusBars = false
-        activity.window.statusBarColor = Color.Black.toArgb()
+        controller.isAppearanceLightStatusBars = !darkMode
+        activity.window.statusBarColor =
+            (if (darkMode) Color.Black else Color(0xFF111111)).toArgb()
 
         onDispose {
             runCatching { tunner.stopTuning(clearState = false) }
@@ -310,8 +324,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
     }
 
     val topBarHeight = 64.dp
+    val screenBg = if (darkMode) Color(0xFF0E0F12) else Color(0xFFF5F6F8)
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+    Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
         Box(Modifier.fillMaxSize()) {
 
             // ===== contenido PDF con zoom/pan =====
@@ -323,6 +338,9 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         if (selectedTool == "none") {
                             Modifier.pointerInput(selectedTool) {
                                 detectTransformGestures { centroid, pan, zoom, _ ->
+                                    // si hay zoom diferente de 1, consideramos pinch
+                                    isPinching = zoom != 1f
+
                                     val newScale = (scale * zoom).coerceIn(1f, 4f)
 
                                     if (kotlin.math.abs(newScale - scale) > 0.001f) {
@@ -355,18 +373,10 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
             ) {
                 LazyColumn(
                     state = listState,
+                    // si estás pellizcando, desactiva scroll para evitar saltos
                     userScrollEnabled = !isPinching,
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val pressed = event.changes.count { it.pressed }
-                                    isPinching = pressed >= 2
-                                }
-                            }
-                        }
                         .graphicsLayer(
                             scaleX = scale,
                             scaleY = scale,
@@ -382,23 +392,17 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                             bitmap = bmp,
                             showLoadingLabel = bmp == null,
                             editMode = true,
-                            annotations = annotations.getOrPut(index) {
-                                PageAnnotations(index)
-                            },
+                            annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                             selectedTool = selectedTool,
                             penColor = penColor,
                             strokeWidth = strokeWidth,
                             smoothingEnabled = smoothingEnabled,
                             onPathAdded = { path ->
-                                annotations.getOrPut(index) {
-                                    PageAnnotations(index)
-                                }.paths.add(path)
+                                annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                 scheduleSave()
                             },
                             onErase = { eraserPoints ->
-                                val page = annotations.getOrPut(index) {
-                                    PageAnnotations(index)
-                                }
+                                val page = annotations.getOrPut(index) { PageAnnotations(index) }
                                 val toRemove = mutableSetOf<Int>()
                                 page.paths.forEachIndexed { pIdx, p ->
                                     val pts = p.points
@@ -407,9 +411,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                     for (i in 0 until pts.size - 1) {
                                         val a = pts[i]; val b = pts[i + 1]
                                         if (eraserPoints.any { e ->
-                                                distancePointToSegment(
-                                                    e, a, b
-                                                ) <= (strokeWidth * 100)
+                                                distancePointToSegment(e, a, b) <= (strokeWidth * 100)
                                             }
                                         ) {
                                             hit = true; break
@@ -422,14 +424,15 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                                         .forEach { page.paths.removeAt(it) }
                                     scheduleSave()
                                 }
-                            }
+                            },
+                            darkMode = darkMode
                         )
                         Spacer(Modifier.height(12.dp))
                     }
                 }
             }
 
-            // ===== barra superior (sin título, solo iconos) =====
+            // ===== barra superior =====
             StyledTopBar(
                 onBack = onBack,
                 tunerOn = tunerOn,
@@ -439,12 +442,15 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         ensureMicPermission { tunerOn = true }
                     } else {
                         tunerOn = false
-                        showNeedleTuner = false
+
                     }
                 },
-                onConcertClick = { concertModeOn = !concertModeOn }
+                onConcertClick = { concertModeOn = !concertModeOn },
+                darkMode = darkMode,
+
             )
 
+            // banner afinador
             if (tunerOn) {
                 TunnerSmall(
                     tunner = tunner,
@@ -453,11 +459,12 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                         .padding(top = (topBarHeight - 44.dp) / 2)
                         .fillMaxWidth(0.7f)
                         .height(44.dp),
-                    onClick = { showTunerSettings = true },
-                    onLongClick = { showNeedleTuner = !showNeedleTuner }
+                    onClick = { showTunerSettings = true }
                 )
+
             }
 
+            // barra izquierda
             StyledLeftToolBar(
                 selectedTool = selectedTool,
                 penColor = penColor,
@@ -472,9 +479,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                     annotations[currentPage]?.paths?.removeLastOrNull()
                     scheduleSave()
                 },
+                darkMode = darkMode,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(top = topBarHeight)
+                    .fillMaxHeight()
             )
 
             if (showColorPicker) {
@@ -485,7 +494,6 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             }
 
-            // diálogo ajustes afinador
             if (showTunerSettings) {
                 TunerSettingsDialog(
                     tuner = tunner,
@@ -493,15 +501,7 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 )
             }
 
-            // afinador de aguja (debajo del banner)
-            if (showNeedleTuner && tunerOn) {
-                NeedleTunerOverlay(
-                    tunner = tunner,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 56.dp)
-                )
-            }
+
         }
     }
 }
@@ -530,7 +530,6 @@ private class PdfRendererHolder(file: File) {
     @Volatile private var closed = false
     private val renderMutex = Mutex()
 
-    // Límite de memoria de la caché (1/6 de la memoria máxima de la app)
     private val maxKb =
         (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt().coerceAtLeast(8 * 1024)
 
@@ -559,7 +558,6 @@ private class PdfRendererHolder(file: File) {
 
         cache.get(key)?.let { return it }
 
-        var page: PdfRenderer.Page? = null
         return try {
             renderMutex.withLock {
                 if (closed) return null
@@ -567,35 +565,30 @@ private class PdfRendererHolder(file: File) {
 
                 cache.get(key)?.let { return it }
 
-                page = renderer.openPage(index)
-                val srcW = page!!.width
-                val srcH = page!!.height
+                val pageLocal = renderer.openPage(index)
+                pageLocal.use { page ->   // <- se cierra solo al salir
+                    val srcW = page.width
+                    val srcH = page.height
 
-                val scale = (clampedTargetW.toFloat() / srcW).coerceIn(0.1f, 8f)
-                val outW = (srcW * scale).toInt().coerceAtLeast(1)
-                val outH = (srcH * scale).toInt().coerceAtLeast(1)
+                    val scale = (clampedTargetW.toFloat() / srcW).coerceIn(0.1f, 8f)
+                    val outW = (srcW * scale).toInt().coerceAtLeast(1)
+                    val outH = (srcH * scale).toInt().coerceAtLeast(1)
 
-                val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    val bitmap = createBitmap(outW, outH)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-                page!!.render(
-                    bitmap,
-                    null,
-                    null,
-                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
-                )
-
-                cache.put(key, bitmap)
-                bitmap
+                    cache.put(key, bitmap)
+                    bitmap
+                }
             }
         } catch (e: Throwable) {
             Log.w(TAG, "render failed idx=$index w=$targetW: ${e.javaClass.simpleName}: ${e.message}")
             null
-        } finally {
-            runCatching { page?.close() }
         }
     }
 
-    fun clearCache() { runCatching { cache.evictAll() } }
+
+    
 
     fun close() {
         if (closed) return
@@ -619,20 +612,19 @@ fun PdfPageItem(
     strokeWidth: Float,
     smoothingEnabled: Boolean,
     onPathAdded: (DrawingPath) -> Unit,
-    onErase: (List<Offset>) -> Unit
+    onErase: (List<Offset>) -> Unit,
+    darkMode: Boolean
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
-    var canvasW by remember { mutableStateOf(0f) }
-    var canvasH by remember { mutableStateOf(0f) }
-    var eraserActive by remember { mutableStateOf(false) }
-    var redrawTrigger by remember { mutableStateOf(0) }
+    var canvasW by remember { mutableFloatStateOf(0f) }
+    var canvasH by remember { mutableFloatStateOf(0f) }
+    var redrawTrigger by remember { mutableIntStateOf(0) }
 
     fun toNorm(o: Offset): Offset =
         if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
 
     fun toPx(o: Offset): Offset = Offset(o.x * canvasW, o.y * canvasH)
 
-    // Suavizado sencillo tipo Chaikin
     fun smoothPath(points: List<Offset>, iterations: Int = 1): List<Offset> {
         if (points.size < 3) return points
         var smoothed = points
@@ -671,10 +663,13 @@ fun PdfPageItem(
     }
 
     if (bitmap != null) {
+        val pageBg = if (darkMode) Color(0xFF303030) else MaterialTheme.colorScheme.surface
+        val canvasBg = if (darkMode) Color(0xFFFAFAFA) else MaterialTheme.colorScheme.surface
+
         Box(
             Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF303030))
+                .background(pageBg)
                 .padding(8.dp)
         ) {
             key(redrawTrigger) {
@@ -682,7 +677,7 @@ fun PdfPageItem(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                        .background(Color.White)
+                        .background(canvasBg)
                         .onSizeChanged { newSize ->
                             canvasW = newSize.width.toFloat()
                             canvasH = newSize.height.toFloat()
@@ -701,11 +696,10 @@ fun PdfPageItem(
 
                                         drag(down.id) { change ->
                                             change.consume()
-                                            val pos = change.position
-                                            currentPath.add(toNorm(pos))
+
+                                            currentPath.add(toNorm(change.position))
 
                                             if (selectedTool == "eraser") {
-                                                eraserActive = true
                                                 onErase(currentPath.toList())
                                                 redrawTrigger++
                                             }
@@ -730,19 +724,16 @@ fun PdfPageItem(
                                             }
                                         }
                                         currentPath.clear()
-                                        eraserActive = false
                                     }
                                 }
                             } else Modifier
                         )
                 ) {
-                    // Fondo: la página del PDF
                     drawImage(
                         bitmap.asImageBitmap(),
                         dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
                     )
 
-                    // Paths guardados
                     annotations.paths.forEach { p ->
                         when {
                             p.points.size > 1 -> {
@@ -760,7 +751,6 @@ fun PdfPageItem(
                                     style = Stroke(width = p.strokeWidth * size.width)
                                 )
                             }
-
                             p.points.size == 1 -> {
                                 val pp = toPx(p.points.first())
                                 drawCircle(
@@ -772,7 +762,6 @@ fun PdfPageItem(
                         }
                     }
 
-                    // Path en vivo
                     if (selectedTool == "pen" && currentPath.isNotEmpty()) {
                         if (currentPath.size > 1) {
                             val path = Path().apply {
@@ -788,7 +777,7 @@ fun PdfPageItem(
                                 color = penColor,
                                 style = Stroke(width = strokeWidth * size.width)
                             )
-                        } else if (currentPath.size == 1) {
+                        } else {
                             val pp = toPx(currentPath.first())
                             drawCircle(
                                 color = penColor,
@@ -805,163 +794,15 @@ fun PdfPageItem(
             Modifier
                 .fillMaxWidth()
                 .height(200.dp)
-                .background(Color(0xFF1E1E1E)),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
             if (showLoadingLabel) {
                 CircularProgressIndicator(
-                    color = Color.White.copy(alpha = 0.8f),
+                    color = MaterialTheme.colorScheme.primary,
                     strokeWidth = 2.dp
                 )
             }
-        }
-    }
-}
-
-// ===== BARRA IZQUIERDA =====
-@Composable
-fun LeftToolBar(
-    selectedTool: String,
-    penColor: Color,
-    strokeWidth: Float,
-    smoothingEnabled: Boolean,
-    onSelectTool: (String) -> Unit,
-    onColorClick: () -> Unit,
-    onStrokeChange: (Float) -> Unit,
-    onToggleSmoothing: () -> Unit,
-    onUndo: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.width(80.dp),
-        color = Color(0xFF2F343A)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ToolButton(
-                icon = Icons.Default.TouchApp,
-                label = "Navegar",
-                selected = selectedTool == "none",
-                onClick = { onSelectTool("none") }
-            )
-            ToolButton(
-                icon = Icons.Default.Edit,
-                label = "Lápiz",
-                selected = selectedTool == "pen",
-                onClick = { onSelectTool("pen") }
-            )
-            ToolButton(
-                icon = Icons.Default.Delete,
-                label = "Borrador",
-                selected = selectedTool == "eraser",
-                onClick = { onSelectTool("eraser") }
-            )
-
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(
-                color = Color.White.copy(alpha = 0.2f),
-                modifier = Modifier.width(48.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = penColor,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clickable { onColorClick() },
-                shadowElevation = 2.dp
-            ) {}
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(vertical = 8.dp)
-            ) {
-                ToolButton(
-                    icon = Icons.Default.Remove,
-                    label = "Fino",
-                    selected = strokeWidth < 0.005f,
-                    onClick = { onStrokeChange(0.003f) },
-                    compact = true
-                )
-                Spacer(Modifier.height(4.dp))
-                ToolButton(
-                    icon = Icons.Default.HorizontalRule,
-                    label = "Medio",
-                    selected = strokeWidth in 0.005f..0.008f,
-                    onClick = { onStrokeChange(0.006f) },
-                    compact = true
-                )
-                Spacer(Modifier.height(4.dp))
-                ToolButton(
-                    icon = Icons.Default.DragHandle,
-                    label = "Grueso",
-                    selected = strokeWidth > 0.008f,
-                    onClick = { onStrokeChange(0.01f) },
-                    compact = true
-                )
-            }
-
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(
-                color = Color.White.copy(alpha = 0.2f),
-                modifier = Modifier.width(48.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-
-            ToolButton(
-                icon = Icons.Default.Tune,
-                label = "Suavizado",
-                selected = smoothingEnabled,
-                onClick = onToggleSmoothing
-            )
-
-            Spacer(Modifier.weight(1f))
-
-            ToolButton(
-                icon = Icons.AutoMirrored.Filled.Undo,
-                label = "Deshacer",
-                selected = false,
-                onClick = onUndo
-            )
-        }
-    }
-}
-
-@Composable
-fun ToolButton(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    compact: Boolean = false
-) {
-    val bg = if (selected) Color(0xFFEFF6FF) else Color.Transparent
-    val tint = if (selected) Color(0xFF1D4ED8) else Color.White
-    val size = if (compact) 40.dp else 56.dp
-
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = bg,
-        modifier = Modifier
-            .size(size)
-            .clickable { onClick() }
-    ) {
-        Box(
-            Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
-            )
         }
     }
 }
@@ -981,7 +822,8 @@ fun ColorPickerDialog(
                 val colors = listOf(
                     Color.Red, Color.Blue, Color.Green, Color.Yellow,
                     Color.Black, Color.Magenta, Color.Cyan, Color(0xFFFF6B6B),
-                    Color(0xFF4ECDC4), Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA)
+                    Color(0xFF4ECDC4), Color(0xFF95E1D3),
+                    Color(0xFFF38181), Color(0xFFAA96DA)
                 )
                 colors.chunked(4).forEach { row ->
                     Row(
@@ -1010,13 +852,7 @@ fun ColorPickerDialog(
             }
         },
         confirmButton = {
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = null,
-                    tint = Color.White
-                )
-            }
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
         }
     )
 }
@@ -1027,8 +863,7 @@ fun ColorPickerDialog(
 fun TunnerSmall(
     tunner: AudioTuner,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onLongClick: (Offset) -> Unit
+    onClick: () -> Unit
 ) {
     val state by tunner.tuningState.collectAsState(initial = null)
 
@@ -1042,24 +877,120 @@ fun TunnerSmall(
         }
     }
 
+    // Color de triángulos con contraste automático
+    val markerColor = if (bg.luminance() > 0.5f) Color.Black else Color.White
+
+    val cents = (state?.centsOff ?: 0.0).coerceIn(-50.0, 50.0)
+    val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
+
+    // Animación suave del desplazamiento horizontal
+    val animNorm by animateFloatAsState(
+        targetValue = normalized,
+        animationSpec = tween(durationMillis = 80),
+        label = "tuner_triangles"
+    )
+
     Box(
         modifier = modifier
-            .clickable(onClick = onClick)
-            .pointerInput(Unit) {
-                detectTapGestures(onLongPress = onLongClick)
-            }
-            .background(bg, shape = RoundedCornerShape(999.dp))
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .clip(RoundedCornerShape(999.dp))
+            .background(bg)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        val note = state?.targetNote ?: "--"
-        Text(
-            note,
-            color = Color.Black,
-            style = MaterialTheme.typography.titleMedium
-        )
+        // Canvas pegado al borde real (sin padding)
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val w = size.width
+            val h = size.height
+
+            val centerX = w / 2f
+            val range = w * 0.42f
+            val x = centerX + animNorm * range
+
+            val triW = h * 0.32f
+            val triH = h * 0.30f
+
+            val inTuneCents = 12.0
+            val maxCents = 50.0
+            val normLimit = (inTuneCents / maxCents).toFloat()
+
+            val tickLen = h * 0.18f
+            val tickStroke = h * 0.04f
+            val halfStroke = tickStroke / 2f
+
+            // Triángulo superior (base en borde)
+            val topTri = Path().apply {
+                moveTo(x - triW / 2f, -halfStroke)
+                lineTo(x + triW / 2f, -halfStroke)
+                lineTo(x, triH)
+                close()
+            }
+
+            // Triángulo inferior (base en borde)
+            val bottomTri = Path().apply {
+                moveTo(x - triW / 2f, h + halfStroke)
+                lineTo(x + triW / 2f, h + halfStroke)
+                lineTo(x, h - triH)
+                close()
+            }
+
+            drawPath(topTri, color = markerColor)
+            drawPath(bottomTri, color = markerColor)
+
+            // Líneas de zona afinada (pegadas a borde)
+            val xLeft  = centerX - normLimit * range
+            val xRight = centerX + normLimit * range
+
+            // Arriba
+            drawLine(
+                color = markerColor,
+                start = Offset(xLeft, -halfStroke),
+                end   = Offset(xLeft, tickLen),
+                strokeWidth = tickStroke
+            )
+            drawLine(
+                color = markerColor,
+                start = Offset(xRight, -halfStroke),
+                end   = Offset(xRight, tickLen),
+                strokeWidth = tickStroke
+            )
+
+            // Abajo
+            drawLine(
+                color = markerColor,
+                start = Offset(xLeft, h + halfStroke),
+                end   = Offset(xLeft, h - tickLen),
+                strokeWidth = tickStroke
+            )
+            drawLine(
+                color = markerColor,
+                start = Offset(xRight, h + halfStroke),
+                end   = Offset(xRight, h - tickLen),
+                strokeWidth = tickStroke
+            )
+        }
+
+        // Texto encima con padding SOLO para la nota
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val note = state?.targetNote
+                ?.replace(Regex("\\d+"), "")
+                ?: "--"
+
+            Text(
+                text = note,
+                color = Color.Black,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
+
 }
+
 
 // ===== DIALOGO AJUSTES AFINADOR =====
 @Composable
@@ -1107,9 +1038,7 @@ fun TunerSettingsDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cerrar") }
-        }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } }
     )
 }
 
@@ -1217,8 +1146,13 @@ fun StyledTopBar(
     tunerOn: Boolean,
     concertModeOn: Boolean,
     onTunerClick: () -> Unit,
-    onConcertClick: () -> Unit
+    onConcertClick: () -> Unit,
+    darkMode: Boolean
+
 ) {
+    val barBg = if (darkMode) Color(0xFF111111) else Color(0xFFF0F1F3)
+    val iconTint = if (darkMode) Color.White else Color(0xFF111111)
+
     TopAppBar(
         title = {},
         navigationIcon = {
@@ -1226,18 +1160,20 @@ fun StyledTopBar(
                 Icon(
                     Icons.Default.Home,
                     contentDescription = "Volver",
-                    tint = Color.White,
+                    tint = iconTint,
                     modifier = Modifier.size(30.dp)
                 )
             }
         },
         actions = {
+
+
             IconButton(onClick = onTunerClick) {
                 Box(modifier = Modifier.size(28.dp)) {
                     Icon(
                         Icons.Default.MusicNote,
                         contentDescription = "Afinador",
-                        tint = Color.White,
+                        tint = iconTint,
                         modifier = Modifier.matchParentSize()
                     )
                     if (tunerOn) {
@@ -1256,19 +1192,21 @@ fun StyledTopBar(
                 Icon(
                     Icons.Default.PlayArrow,
                     contentDescription = "Concert",
-                    tint = if (concertModeOn) Color(0xFFFFC107) else Color.White,
+                    tint = if (concertModeOn) Color(0xFFFFC107) else iconTint,
                     modifier = Modifier.size(32.dp)
                 )
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color(0xFF111111),
-            titleContentColor = Color.White
+            containerColor = barBg,
+            titleContentColor = iconTint,
+            navigationIconContentColor = iconTint,
+            actionIconContentColor = iconTint
         ),
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp)
-            .border(0.5.dp, Color(0xFF1C1C1C))
+            .border(0.5.dp, if (darkMode) Color(0xFF1C1C1C) else Color(0xFFE0E0E0))
             .shadow(8.dp)
     )
 }
@@ -1284,11 +1222,14 @@ fun StyledLeftToolBar(
     onStrokeChange: (Float) -> Unit,
     onToggleSmoothing: () -> Unit,
     onUndo: () -> Unit,
+    darkMode: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val toolbarBg = if (darkMode) Color(0xFF1B1E23) else Color(0xFFF0F1F3)
+
     Surface(
         modifier = modifier.width(88.dp),
-        color = Color(0xFF1B1E23),
+        color = toolbarBg,
         tonalElevation = 6.dp,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
@@ -1304,25 +1245,32 @@ fun StyledLeftToolBar(
                 icon = Icons.Default.TouchApp,
                 label = "Mover",
                 selected = selectedTool == "none",
-                onClick = { onSelectTool("none") }
+                onClick = { onSelectTool("none") },
+                darkMode = darkMode
             )
 
             StyledToolButton(
                 icon = Icons.Default.Edit,
                 label = "Lápiz",
                 selected = selectedTool == "pen",
-                onClick = { onSelectTool("pen") }
+                onClick = { onSelectTool("pen") },
+                darkMode = darkMode
             )
 
             StyledToolButton(
                 icon = Icons.Default.Delete,
                 label = "Borrar",
                 selected = selectedTool == "eraser",
-                onClick = { onSelectTool("eraser") }
+                onClick = { onSelectTool("eraser") },
+                darkMode = darkMode
             )
 
             Spacer(Modifier.height(12.dp))
-            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            HorizontalDivider(
+                modifier = Modifier.width(60.dp),
+                thickness = 1.dp,
+                color = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.1f)
+            )
             Spacer(Modifier.height(12.dp))
 
             Surface(
@@ -1340,33 +1288,41 @@ fun StyledLeftToolBar(
                     label = "Fino",
                     selected = strokeWidth < 0.005f,
                     onClick = { onStrokeChange(0.003f) },
-                    compact = true
+                    compact = true,
+                    darkMode = darkMode
                 )
                 StyledToolButton(
                     icon = Icons.Default.HorizontalRule,
                     label = "Medio",
                     selected = strokeWidth in 0.005f..0.008f,
                     onClick = { onStrokeChange(0.006f) },
-                    compact = true
+                    compact = true,
+                    darkMode = darkMode
                 )
                 StyledToolButton(
                     icon = Icons.Default.DragHandle,
                     label = "Grueso",
                     selected = strokeWidth > 0.008f,
                     onClick = { onStrokeChange(0.01f) },
-                    compact = true
+                    compact = true,
+                    darkMode = darkMode
                 )
             }
 
             Spacer(Modifier.height(12.dp))
-            Divider(color = Color.White.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(60.dp))
+            HorizontalDivider(
+                modifier = Modifier.width(60.dp),
+                thickness = 1.dp,
+                color = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.1f)
+            )
             Spacer(Modifier.height(12.dp))
 
             StyledToolButton(
                 icon = Icons.Default.Tune,
                 label = "Suave",
                 selected = smoothingEnabled,
-                onClick = onToggleSmoothing
+                onClick = onToggleSmoothing,
+                darkMode = darkMode
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -1375,7 +1331,8 @@ fun StyledLeftToolBar(
                 icon = Icons.AutoMirrored.Filled.Undo,
                 label = "Undo",
                 selected = false,
-                onClick = onUndo
+                onClick = onUndo,
+                darkMode = darkMode
             )
         }
     }
@@ -1387,10 +1344,23 @@ fun StyledToolButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
-    compact: Boolean = false
+    compact: Boolean = false,
+    darkMode: Boolean
 ) {
-    val bg = if (selected) Color(0xFF2E466E) else Color(0xFF272B33)
-    val tint = if (selected) Color(0xFF90CAF9) else Color(0xFFD0D3D8)
+    val bg = when {
+        selected && darkMode -> Color(0xFF2E466E)
+        selected && !darkMode -> Color(0xFFDCE7FF)
+        !selected && darkMode -> Color(0xFF272B33)
+        else -> Color(0xFFE6E8EC)
+    }
+
+    val tint = when {
+        selected && darkMode -> Color(0xFF90CAF9)
+        selected && !darkMode -> Color(0xFF1D4ED8)
+        !selected && darkMode -> Color(0xFFD0D3D8)
+        else -> Color(0xFF2B2E34)
+    }
+
     val size = if (compact) 42.dp else 56.dp
 
     Surface(
@@ -1402,7 +1372,12 @@ fun StyledToolButton(
         shadowElevation = if (selected) 6.dp else 2.dp
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(if (compact) 20.dp else 24.dp))
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(if (compact) 20.dp else 24.dp)
+            )
         }
     }
 }

@@ -19,6 +19,8 @@ fun generatePdfThumbnail(file: File, width: Int = 200, height: Int = 250): Bitma
         val page = renderer.openPage(0)
 
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.WHITE)
+
         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
         renderer.close()
