@@ -46,6 +46,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import com.example.mypdf.ui.theme.MyPDFTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material3.Icon
 
 // PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
 // <<< PERF IMPORTS <<<
@@ -80,9 +85,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            var darkMode by rememberSaveable { mutableStateOf(false) }
+
+            MyPDFTheme(darkTheme = darkMode) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppRoot()
+                    AppRoot(
+                        isDarkMode = darkMode,
+                        onToggleDarkMode = { darkMode = !darkMode }
+                    )
                 }
             }
         }
@@ -90,7 +100,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppRoot() {
+private fun AppRoot(
+    isDarkMode: Boolean,
+    onToggleDarkMode: () -> Unit
+) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
 
@@ -100,9 +113,17 @@ private fun AppRoot() {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             if (selectedFile == null) {
-                LibraryScreen(onOpen = { selectedPath = it.absolutePath })
+                LibraryScreen(
+                    onOpen = { selectedPath = it.absolutePath },
+                    isDarkMode = isDarkMode,
+                    onToggleDarkMode = onToggleDarkMode
+                )
             } else {
-                PdfEditScreen(file = selectedFile, onBack = { selectedPath = null })
+                PdfEditScreen(
+                    file = selectedFile,
+                    onBack = { selectedPath = null },
+                    isDarkMode = isDarkMode
+                )
             }
         }
     }
@@ -110,7 +131,7 @@ private fun AppRoot() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(onOpen: (File) -> Unit) {
+fun LibraryScreen(onOpen: (File) -> Unit, isDarkMode: Boolean, onToggleDarkMode: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -275,12 +296,34 @@ fun LibraryScreen(onOpen: (File) -> Unit) {
         Row(Modifier.fillMaxSize()) {
             Surface(
                 tonalElevation = 3.dp,
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.width(sidebarWidth).fillMaxHeight()
             ) {
                 Column(
                     modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Temas",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        IconButton(onClick = onToggleDarkMode) {
+                            Icon(
+                                imageVector = if (isDarkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                contentDescription = "Cambiar modo",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
                     Text("Categorías", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(8.dp))
                     Spacer(Modifier.height(4.dp))
                     LazyColumn(modifier = Modifier.weight(1f)) {

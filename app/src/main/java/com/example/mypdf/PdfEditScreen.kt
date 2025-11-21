@@ -6,7 +6,8 @@ import java.io.File
 @Composable
 fun PdfEditScreen(
     file: File,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isDarkMode: Boolean
 ) {
-    PdfViewerScreen(file = file, onBack = onBack)
+    PdfViewerScreen(file = file, onBack = onBack, isDarkMode = isDarkMode)
 }
