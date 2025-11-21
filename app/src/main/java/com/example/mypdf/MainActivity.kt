@@ -106,9 +106,11 @@ class MainActivity : ComponentActivity() {
                             
                             OnboardingDialog(
                                 initialLanguage = initialLang,
-                                onFinish = { lang, dark, daltonic ->
+                                isDarkMode = darkMode,
+                                onThemeChange = { darkMode = it },
+                                onFinish = { lang, daltonic ->
                                     language = lang
-                                    darkMode = dark
+                                    // darkMode is already updated via onThemeChange
                                     isDaltonic = daltonic
                                     save()
                                     showOnboarding = false

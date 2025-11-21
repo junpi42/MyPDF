@@ -69,6 +69,7 @@ interface AppStrings {
     val welcomeTitle: String
     val chooseLanguage: String
     val chooseTheme: String
+    val finish: String
 
 
     val daltonismOption: String
@@ -133,7 +134,7 @@ object StringsEs : AppStrings {
     override val chooseLanguage = "Elige tu idioma"
     override val chooseTheme = "Elige un tema"
     override val finish = "Finalizar"
-    override val finish = "Finalizar"
+
     override val daltonismOption = "Daltonismo (próximamente)"
     override val next = "Siguiente"
     override val onboardingDisclaimer = "No te preocupes, puedes volver a cambiar esto en configuración."
@@ -196,7 +197,7 @@ object StringsEn : AppStrings {
     override val chooseLanguage = "Choose your language"
     override val chooseTheme = "Choose a theme"
     override val finish = "Finish"
-    override val finish = "Finish"
+
     override val daltonismOption = "Color blindness (coming soon)"
     override val next = "Next"
     override val onboardingDisclaimer = "Don't worry, you can change this later in settings."

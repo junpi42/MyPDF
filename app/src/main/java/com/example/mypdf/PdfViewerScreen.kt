@@ -64,7 +64,7 @@ fun PdfViewerScreen(
     var selectedTool by remember { mutableStateOf("none") }
     var penColor by remember { mutableStateOf(Color.Red) }
     var strokeWidth by remember { mutableFloatStateOf(0.006f) }
-    var smoothingEnabled by remember { mutableStateOf(true) }
+    var smoothingEnabled by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
 
     // afinador
@@ -77,6 +77,8 @@ fun PdfViewerScreen(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var isPinching by remember { mutableStateOf(false) }
+    
+    var redrawTrigger by remember { mutableStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -349,7 +351,6 @@ fun PdfViewerScreen(
                                 strokeWidth = strokeWidth,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = {},
-                                onErase = {},
                                 darkMode = darkMode
                             )
                             Spacer(Modifier.height(12.dp))
@@ -438,34 +439,12 @@ fun PdfViewerScreen(
                                 penColor = penColor,
                                 strokeWidth = strokeWidth,
                                 smoothingEnabled = smoothingEnabled,
+                                redrawTrigger = redrawTrigger,
                                 onPathAdded = { path ->
                                     annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                     scheduleSave()
                                 },
-                                onErase = { eraserPoints ->
-                                    val page = annotations.getOrPut(index) { PageAnnotations(index) }
-                                    val toRemove = mutableSetOf<Int>()
-                                    page.paths.forEachIndexed { pIdx, p ->
-                                        val pts = p.points
-                                        if (pts.size < 2) return@forEachIndexed
-                                        var hit = false
-                                        for (i in 0 until pts.size - 1) {
-                                            val a = pts[i]; val b = pts[i + 1]
-                                            if (eraserPoints.any { e ->
-                                                    distancePointToSegment(e, a, b) <= (strokeWidth * 100)
-                                                }
-                                            ) {
-                                                hit = true; break
-                                            }
-                                        }
-                                        if (hit) toRemove.add(pIdx)
-                                    }
-                                    if (toRemove.isNotEmpty()) {
-                                        toRemove.sortedDescending()
-                                            .forEach { page.paths.removeAt(it) }
-                                        scheduleSave()
-                                    }
-                                },
+
                                 darkMode = darkMode
                             )
                             Spacer(Modifier.height(12.dp))
@@ -517,6 +496,7 @@ fun PdfViewerScreen(
                         val currentPage = listState.firstVisibleItemIndex
                         annotations[currentPage]?.paths?.removeLastOrNull()
                         scheduleSave()
+                        redrawTrigger++
                     },
                     darkMode = darkMode,
                     language = language,
