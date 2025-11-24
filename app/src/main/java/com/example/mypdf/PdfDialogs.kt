@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -83,11 +84,12 @@ fun ColorPickerDialog(
 @Composable
 fun TunerSettingsDialog(
     tuner: AudioTuner,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val a4 by tuner.baseFrequency.collectAsState(initial = 442.0)
     val noisy by tuner.noisyEnvironment.collectAsState(initial = false)
-    var daltonic by remember { mutableStateOf(false) }
     val s = strings()
 
     AlertDialog(
@@ -150,7 +152,7 @@ fun TunerSettingsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(s.tunerDaltonismSoon, style = MaterialTheme.typography.bodyLarge)
-                    Switch(checked = daltonic, onCheckedChange = { daltonic = it })
+                    Switch(checked = isDaltonic, onCheckedChange = { onToggleDaltonic() })
                 }
             }
         },
@@ -165,6 +167,8 @@ fun TunerSettingsDialog(
 fun SettingsDialog(
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language,
     onToggleLanguage: () -> Unit,
     gridScale: Float,
@@ -226,6 +230,22 @@ fun SettingsDialog(
                     Button(onClick = onToggleLanguage) {
                         Text(if (language == Language.EN) "English" else "Español")
                     }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // Daltonic
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(16.dp))
+                        Text(s.daltonismOption, style = MaterialTheme.typography.titleMedium)
+                    }
+                    Switch(checked = isDaltonic, onCheckedChange = { onToggleDaltonic() })
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

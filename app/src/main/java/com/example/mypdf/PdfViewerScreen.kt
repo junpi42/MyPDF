@@ -50,6 +50,8 @@ fun PdfViewerScreen(
     file: File,
     onBack: () -> Unit,
     isDarkMode: Boolean,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language
 ) {
     val context = LocalContext.current
@@ -63,8 +65,9 @@ fun PdfViewerScreen(
 
     var selectedTool by remember { mutableStateOf("none") }
     var penColor by remember { mutableStateOf(Color.Red) }
-    var strokeWidth by remember { mutableFloatStateOf(0.006f) }
-    var smoothingEnabled by remember { mutableStateOf(false) }
+    var penStrokeWidth by remember { mutableFloatStateOf(0.006f) }
+    var eraserRadiusNorm by remember { mutableFloatStateOf(0.03f) }
+    var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
 
     // afinador
@@ -77,8 +80,6 @@ fun PdfViewerScreen(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var isPinching by remember { mutableStateOf(false) }
-    
-    var redrawTrigger by remember { mutableStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -348,9 +349,11 @@ fun PdfViewerScreen(
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = "none",
                                 penColor = penColor,
-                                strokeWidth = strokeWidth,
+                                penStrokeWidth = penStrokeWidth,
+                                eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = {},
+                                onErase = {},
                                 darkMode = darkMode
                             )
                             Spacer(Modifier.height(12.dp))
@@ -437,14 +440,108 @@ fun PdfViewerScreen(
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = selectedTool,
                                 penColor = penColor,
-                                strokeWidth = strokeWidth,
+                                penStrokeWidth = penStrokeWidth,
+                                eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
-                                redrawTrigger = redrawTrigger,
                                 onPathAdded = { path ->
                                     annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
                                     scheduleSave()
                                 },
+                                onErase = { eraserPoints ->
+                                    val page = annotations.getOrPut(index) { PageAnnotations(index) }
+                                    val resultPaths = mutableListOf<DrawingPath>()
+                                    var changed = false
+                                    val threshold = eraserRadiusNorm
 
+                                    page.paths.forEach { p ->
+                                        val pts = p.points
+                                        if (pts.isEmpty()) {
+                                            resultPaths.add(p)
+                                            return@forEach
+                                        }
+
+                                        // Optimization: Check bounding box first
+                                        var minX = Float.MAX_VALUE; var maxX = Float.MIN_VALUE
+                                        var minY = Float.MAX_VALUE; var maxY = Float.MIN_VALUE
+                                        pts.forEach { pt ->
+                                            if (pt.x < minX) minX = pt.x
+                                            if (pt.x > maxX) maxX = pt.x
+                                            if (pt.y < minY) minY = pt.y
+                                            if (pt.y > maxY) maxY = pt.y
+                                        }
+                                        // Expand bounds by threshold
+                                        minX -= threshold; maxX += threshold
+                                        minY -= threshold; maxY += threshold
+
+                                        val inBounds = eraserPoints.any { e ->
+                                            e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY
+                                        }
+                                        if (!inBounds) {
+                                            resultPaths.add(p)
+                                            return@forEach
+                                        }
+
+                                        val splitParts = mutableListOf<DrawingPath>()
+                                        val currentSegmentPoints = mutableListOf<androidx.compose.ui.geometry.Offset>()
+                                        var pathWasHit = false
+
+                                        for (i in pts.indices) {
+                                            val point = pts[i]
+                                            // Check if point is hit
+                                            val isPointHit = eraserPoints.any { e ->
+                                                val dx = e.x - point.x
+                                                val dy = e.y - point.y
+                                                (dx * dx + dy * dy) <= (threshold * threshold)
+                                            }
+
+                                            if (isPointHit) {
+                                                pathWasHit = true
+                                                if (currentSegmentPoints.isNotEmpty()) {
+                                                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                                    currentSegmentPoints.clear()
+                                                }
+                                                continue
+                                            }
+
+                                            // Point is valid
+                                            if (currentSegmentPoints.isEmpty()) {
+                                                currentSegmentPoints.add(point)
+                                            } else {
+                                                val prev = currentSegmentPoints.last()
+                                                // Check segment prev-point
+                                                val isSegmentHit = eraserPoints.any { e ->
+                                                    distancePointToSegment(e, prev, point) <= threshold
+                                                }
+
+                                                if (isSegmentHit) {
+                                                    pathWasHit = true
+                                                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                                    currentSegmentPoints.clear()
+                                                    currentSegmentPoints.add(point)
+                                                } else {
+                                                    currentSegmentPoints.add(point)
+                                                }
+                                            }
+                                        }
+
+                                        if (currentSegmentPoints.isNotEmpty()) {
+                                            splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                        }
+
+                                        if (pathWasHit) {
+                                            changed = true
+                                            resultPaths.addAll(splitParts)
+                                        } else {
+                                            resultPaths.add(p)
+                                        }
+                                    }
+
+                                    if (changed) {
+                                        page.paths.clear()
+                                        page.paths.addAll(resultPaths)
+                                        scheduleSave()
+                                    }
+                                },
                                 darkMode = darkMode
                             )
                             Spacer(Modifier.height(12.dp))
@@ -472,6 +569,7 @@ fun PdfViewerScreen(
                 if (tunerOn) {
                     TunnerSmall(
                         tunner = tunner,
+                        isDaltonic = isDaltonic,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .padding(top = (topBarHeight - 44.dp) / 2)
@@ -485,18 +583,23 @@ fun PdfViewerScreen(
                 StyledLeftToolBar(
                     selectedTool = selectedTool,
                     penColor = penColor,
-                    strokeWidth = strokeWidth,
+                    strokeWidth = if (selectedTool == "pen") penStrokeWidth else eraserRadiusNorm,
                     smoothingEnabled = smoothingEnabled,
                     onSelectTool = { selectedTool = it },
                     onColorClick = { showColorPicker = true },
                     onColorChanged = { penColor = it },
-                    onStrokeChange = { strokeWidth = it },
+                    onStrokeChange = { value ->
+                        if (selectedTool == "pen") {
+                            penStrokeWidth = value
+                        } else if (selectedTool == "eraser") {
+                            eraserRadiusNorm = value.coerceIn(0.015f, 0.1f)
+                        }
+                    },
                     onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
                     onUndo = {
                         val currentPage = listState.firstVisibleItemIndex
                         annotations[currentPage]?.paths?.removeLastOrNull()
                         scheduleSave()
-                        redrawTrigger++
                     },
                     darkMode = darkMode,
                     language = language,
@@ -517,6 +620,8 @@ fun PdfViewerScreen(
                 if (showTunerSettings) {
                     TunerSettingsDialog(
                         tuner = tunner,
+                        isDaltonic = isDaltonic,
+                        onToggleDaltonic = onToggleDaltonic,
                         onDismiss = { showTunerSettings = false }
                     )
                 }

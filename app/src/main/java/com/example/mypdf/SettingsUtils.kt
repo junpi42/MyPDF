@@ -10,7 +10,8 @@ data class AppSettings(
     val language: String = "EN",
     val isDarkMode: Boolean = false,
     val isDaltonic: Boolean = false,
-    val gridScale: Float = 1.0f
+    val gridScale: Float = 1.0f,
+    val tutorialCompleted: Boolean = false
 )
 
 object SettingsManager {

@@ -69,12 +69,42 @@ interface AppStrings {
     val welcomeTitle: String
     val chooseLanguage: String
     val chooseTheme: String
-    val finish: String
+    val chooseDaltonism: String
 
 
     val daltonismOption: String
     val next: String
     val onboardingDisclaimer: String
+    val finish: String
+
+    // Registration / Login
+    val registrationTitle: String
+    val loginTitle: String
+    val username: String
+    val email: String
+    val password: String
+    val register: String
+    val login: String
+    val googleSignIn: String
+    val continueGuest: String
+    val skip: String
+    val welcomeUser: String
+    val configuring: String
+    val welcomeSubtitle: String
+    val orSeparator: String
+
+    // Tutorial
+    val tutorialTitle: String
+    val tutorialMessage: String
+    val tutorialAccept: String
+    val tutorialDeny: String
+    val tutorialStepNewCategory: String
+    val tutorialStepFab: String
+    val tutorialStepImport: String
+    val tutorialStepLongPress: String
+    val tutorialStepRename: String
+    val tutorialStepOpen: String
+    val tutorialExit: String
 }
 
 object StringsEs : AppStrings {
@@ -115,7 +145,7 @@ object StringsEs : AppStrings {
 
     override val tunerSettingsTitle = "Ajustes del afinador"
     override val tunerNoisyEnv = "Ambiente ruidoso"
-    override val tunerDaltonismSoon = "Daltonismo (próximamente)"
+    override val tunerDaltonismSoon = "Daltonismo"
 
     override val backDescription = "Volver"
     override val tunerDescription = "Afinador"
@@ -133,11 +163,39 @@ object StringsEs : AppStrings {
     override val welcomeTitle = "Bienvenido"
     override val chooseLanguage = "Elige tu idioma"
     override val chooseTheme = "Elige un tema"
+    override val chooseDaltonism = "Modo daltónico"
     override val finish = "Finalizar"
 
-    override val daltonismOption = "Daltonismo (próximamente)"
+    override val daltonismOption = "Daltonismo"
     override val next = "Siguiente"
     override val onboardingDisclaimer = "No te preocupes, puedes volver a cambiar esto en configuración."
+
+    override val registrationTitle = "Crear cuenta"
+    override val loginTitle = "Iniciar sesión"
+    override val username = "Nombre de usuario"
+    override val email = "Correo electrónico"
+    override val password = "Contraseña"
+    override val register = "Registrarse"
+    override val login = "Entrar"
+    override val googleSignIn = "Continuar con Google"
+    override val continueGuest = "Continuar como invitado"
+    override val skip = "Omitir"
+    override val welcomeUser = "Bienvenido"
+    override val configuring = "Estamos configurándolo todo..."
+    override val welcomeSubtitle = "Tu compañero creativo"
+    override val orSeparator = "o"
+
+    override val tutorialTitle = "¿Quieres aprender a usar la app?"
+    override val tutorialMessage = "Te enseñaremos lo básico en unos sencillos pasos."
+    override val tutorialAccept = "Sí, enséñame"
+    override val tutorialDeny = "No, gracias"
+    override val tutorialStepNewCategory = "Pulsa aquí para crear una nueva categoría"
+    override val tutorialStepFab = "Ahora pulsa el botón +"
+    override val tutorialStepImport = "Selecciona 'Importar PDF'"
+    override val tutorialStepLongPress = "Mantén pulsado el archivo para ver opciones"
+    override val tutorialStepRename = "Elige 'Renombrar'"
+    override val tutorialStepOpen = "¡Genial! Pulsa para abrir tu partitura"
+    override val tutorialExit = "Salir del tutorial"
 }
 
 object StringsEn : AppStrings {
@@ -178,7 +236,7 @@ object StringsEn : AppStrings {
 
     override val tunerSettingsTitle = "Tuner settings"
     override val tunerNoisyEnv = "Noisy environment"
-    override val tunerDaltonismSoon = "Color blindness (coming soon)"
+    override val tunerDaltonismSoon = "Color blindness"
 
     override val backDescription = "Back"
     override val tunerDescription = "Tuner"
@@ -196,11 +254,39 @@ object StringsEn : AppStrings {
     override val welcomeTitle = "Welcome"
     override val chooseLanguage = "Choose your language"
     override val chooseTheme = "Choose a theme"
+    override val chooseDaltonism = "Color blindness mode"
     override val finish = "Finish"
 
-    override val daltonismOption = "Color blindness (coming soon)"
+    override val daltonismOption = "Color blindness"
     override val next = "Next"
     override val onboardingDisclaimer = "Don't worry, you can change this later in settings."
+
+    override val registrationTitle = "Create account"
+    override val loginTitle = "Log in"
+    override val username = "Username"
+    override val email = "Email"
+    override val password = "Password"
+    override val register = "Sign up"
+    override val login = "Log in"
+    override val googleSignIn = "Continue with Google"
+    override val continueGuest = "Continue as Guest"
+    override val skip = "Skip"
+    override val welcomeUser = "Welcome"
+    override val configuring = "Configuring everything..."
+    override val welcomeSubtitle = "Your creative companion"
+    override val orSeparator = "or"
+
+    override val tutorialTitle = "Want to learn how to use the app?"
+    override val tutorialMessage = "We'll show you the basics in a few simple steps."
+    override val tutorialAccept = "Yes, show me"
+    override val tutorialDeny = "No, thanks"
+    override val tutorialStepNewCategory = "Tap here to create a new category"
+    override val tutorialStepFab = "Now tap the + button"
+    override val tutorialStepImport = "Select 'Import PDF'"
+    override val tutorialStepLongPress = "Long press the file to see options"
+    override val tutorialStepRename = "Choose 'Rename'"
+    override val tutorialStepOpen = "Great! Tap to open your score"
+    override val tutorialExit = "Exit tutorial"
 }
 
 fun stringsFor(language: Language): AppStrings {

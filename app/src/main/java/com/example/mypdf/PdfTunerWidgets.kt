@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun TunnerSmall(
     tunner: AudioTuner,
+    isDaltonic: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -44,9 +45,9 @@ fun TunnerSmall(
     val bg = when (val s = state) {
         null -> Color.DarkGray
         else -> when {
-            s.isInTune -> Color(0xFF4CAF50)
-            s.centsOff > 10.0 -> Color(0xFFE53935)
-            s.centsOff < -10.0 -> Color(0xFF1E88E5)
+            s.isInTune -> if (isDaltonic) Color(0xFF00BCD4) else Color(0xFF4CAF50)
+            s.centsOff > 10.0 -> if (isDaltonic) Color(0xFFFF9800) else Color(0xFFE53935)
+            s.centsOff < -10.0 -> if (isDaltonic) Color(0xFFFF00FF) else Color(0xFF1E88E5)
             else -> Color(0xFFFFA000)
         }
     }

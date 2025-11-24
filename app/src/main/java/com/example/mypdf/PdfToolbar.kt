@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
@@ -132,38 +133,29 @@ fun StyledLeftToolBar(
 
             Spacer(Modifier.height(8.dp))
 
-            // Stroke Width
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                StyledToolButton(
-                    icon = Icons.Default.Remove,
-                    label = s.toolThin,
-                    selected = strokeWidth < 0.005f,
-                    onClick = { onStrokeChange(0.003f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
-                StyledToolButton(
-                    icon = Icons.Default.HorizontalRule,
-                    label = s.toolMedium,
-                    selected = strokeWidth in 0.005f..0.008f,
-                    onClick = { onStrokeChange(0.006f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
-                StyledToolButton(
-                    icon = Icons.Default.DragHandle,
-                    label = s.toolThick,
-                    selected = strokeWidth > 0.008f,
-                    onClick = { onStrokeChange(0.01f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
+            // Stroke Width Slider
+            if (selectedTool == "pen" || selectedTool == "eraser") {
+                val (minVal, maxVal) = if (selectedTool == "pen") {
+                    0.003f to 0.02f
+                } else {
+                    0.015f to 0.1f
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(120.dp)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Slider(
+                        value = strokeWidth,
+                        onValueChange = onStrokeChange,
+                        valueRange = minVal..maxVal,
+                        modifier = Modifier
+                            .graphicsLayer { rotationZ = 270f }
+                            .width(120.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -243,4 +235,3 @@ fun StyledToolButton(
         }
     }
 }
-

@@ -1,7 +1,10 @@
 package com.example.mypdf
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,394 +12,676 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
+import kotlin.math.cos
+import kotlin.math.sin
 
-@OptIn(ExperimentalAnimationApi::class)
+private enum class OnboardingStep {
+    Welcome,
+    Login,
+    Register,
+    Language,
+    Theme,
+    Daltonic,
+    Loading
+}
+
 @Composable
 fun OnboardingDialog(
     initialLanguage: Language,
-    isDarkMode: Boolean,
-    onThemeChange: (Boolean) -> Unit,
-    onFinish: (Language, Boolean) -> Unit
+    onFinish: (Language, Boolean, Boolean) -> Unit
 ) {
     // State for the onboarding flow
     var currentLanguage by remember { mutableStateOf(initialLanguage) }
-    // isDarkMode is now passed in
+    var isDarkMode by remember { mutableStateOf(false) }
     var isDaltonic by remember { mutableStateOf(false) }
-    
-    // Steps: 0 -> Language, 1 -> Theme, 2 -> Daltonism
-    var step by remember { mutableStateOf(0) }
-    
+    var currentStep by remember { mutableStateOf(OnboardingStep.Welcome) }
+
+    // Registration/Login state
+    var username by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
     // We use a derived state for strings so they update immediately when language changes
     val s = stringsFor(currentLanguage)
 
-    // Dynamic Background Animation
-    val infiniteTransition = rememberInfiniteTransition(label = "background")
-    val color1 by infiniteTransition.animateColor(
-        initialValue = MaterialTheme.colorScheme.primaryContainer,
-        targetValue = MaterialTheme.colorScheme.tertiaryContainer,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "color1"
-    )
-    val color2 by infiniteTransition.animateColor(
-        initialValue = MaterialTheme.colorScheme.surfaceContainer,
-        targetValue = MaterialTheme.colorScheme.surfaceContainerHigh,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "color2"
-    )
+    // Dynamic background color based on step and theme selection
+    val baseColor = if (currentStep == OnboardingStep.Theme && isDarkMode) {
+        Color(0xFF1C1B1F) // Dark background preview
+    } else if (currentStep == OnboardingStep.Theme && !isDarkMode) {
+        Color(0xFFFFFBFE) // Light background preview
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+
+    val contentColor = if (currentStep == OnboardingStep.Theme && isDarkMode) {
+        Color(0xFFE6E1E5)
+    } else if (currentStep == OnboardingStep.Theme && !isDarkMode) {
+        Color(0xFF1C1B1F)
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    // Loading effect
+    LaunchedEffect(currentStep) {
+        if (currentStep == OnboardingStep.Loading) {
+            delay(2000) // Simulate configuration
+            onFinish(currentLanguage, isDarkMode, isDaltonic)
+        }
+    }
 
     Dialog(
         onDismissRequest = {}, // Prevent dismissal without finishing
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(color1, color2)
-                    )
-                )
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
+            // Animated Background
+            AnimatedGradientBackground(baseColor = baseColor)
+
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp)
-                    .systemBarsPadding(), // Ensure content isn't behind status/nav bars
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .widthIn(max = 600.dp)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                // 1. Welcome Header (Bouncy Entrance)
-                Spacer(Modifier.height(48.dp))
-                var visible by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) { visible = true }
-                
-                AnimatedVisibility(
-                    visible = visible,
-                    enter = scaleIn(
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-                    ) + fadeIn() + slideInVertically { -it }
-                ) {
-                    Text(
-                        text = s.welcomeTitle,
-                        style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                
-                Spacer(Modifier.height(32.dp))
 
-                // 2. Main Content (Fluid Transitions)
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    AnimatedContent(
-                        targetState = step,
-                        transitionSpec = {
-                            if (targetState > initialState) {
-                                (slideInHorizontally { width -> width } + fadeIn() + scaleIn(initialScale = 0.9f)).togetherWith(
-                                    slideOutHorizontally { width -> -width } + fadeOut() + scaleOut(targetScale = 0.9f)
-                                )
-                            } else {
-                                (slideInHorizontally { width -> -width } + fadeIn() + scaleIn(initialScale = 0.9f)).togetherWith(
-                                    slideOutHorizontally { width -> width } + fadeOut() + scaleOut(targetScale = 0.9f)
-                                )
-                            }.using(SizeTransform(clip = false))
-                        },
-                        label = "stepTransition"
-                    ) { targetStep ->
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            when (targetStep) {
-                                0 -> { // Language
-                                    Text(s.chooseLanguage, style = MaterialTheme.typography.headlineMedium)
-                                    Spacer(Modifier.height(48.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                                        LanguageOption(
-                                            label = "English",
-                                            selected = currentLanguage == Language.EN,
-                                            onClick = { currentLanguage = Language.EN }
-                                        )
-                                        LanguageOption(
-                                            label = "Español",
-                                            selected = currentLanguage == Language.ES,
-                                            onClick = { currentLanguage = Language.ES }
-                                        )
-                                    }
-                                }
-                                1 -> { // Theme
-                                    Text(s.chooseTheme, style = MaterialTheme.typography.headlineMedium)
-                                    Spacer(Modifier.height(48.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                                        ThemePreviewOption(
-                                            dark = false,
-                                            selected = !isDarkMode,
-                                            onClick = { onThemeChange(false) },
-                                            label = "Light"
-                                        )
-                                        ThemePreviewOption(
-                                            dark = true,
-                                            selected = isDarkMode,
-                                            onClick = { onThemeChange(true) },
-                                            label = "Dark"
-                                        )
-                                    }
-                                }
-                                2 -> { // Daltonism
-                                    Text(s.daltonismOption, style = MaterialTheme.typography.headlineMedium)
-                                    Spacer(Modifier.height(48.dp))
-                                    
-                                    // Animated Switch Container
-                                    val scale by animateFloatAsState(
-                                        targetValue = if (isDaltonic) 1.1f else 1.0f,
-                                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                        label = "switchScale"
-                                    )
-                                    
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Switch(
-                                            checked = isDaltonic,
-                                            onCheckedChange = { isDaltonic = it },
-                                            modifier = Modifier
-                                                .scale(1.5f)
-                                                .graphicsLayer { scaleX = scale; scaleY = scale }
-                                        )
-                                        Spacer(Modifier.height(16.dp))
-                                        if (isDaltonic) {
-                                            Text("Enabled", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. Footer (Next Button + Disclaimer)
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Button(
-                        onClick = {
-                            if (step < 2) {
-                                step++
-                            } else {
-                                onFinish(currentLanguage, isDaltonic)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp)
-                            .shadow(elevation = 8.dp, shape = MaterialTheme.shapes.large),
-                        shape = MaterialTheme.shapes.large,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
+                AnimatedContent(
+                    targetState = currentStep,
+                    transitionSpec = {
+                        slideInHorizontally { width -> width } + fadeIn() togetherWith
+                                slideOutHorizontally { width -> -width } + fadeOut()
+                    },
+                    label = "OnboardingWizard",
+                    modifier = Modifier.weight(1f, fill = false) // Allow content to take space but not force full height
+                ) { step ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(24.dp)
                     ) {
-                        Text(
-                            text = if (step < 2) s.next else s.finish,
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                        if (step < 2) {
-                            Spacer(Modifier.width(12.dp))
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
+                        when (step) {
+                            OnboardingStep.Welcome -> {
+                                WelcomeStep(
+                                    s = s,
+                                    onLogin = { currentStep = OnboardingStep.Login },
+                                    onRegister = { currentStep = OnboardingStep.Register },
+                                    onGoogle = { currentStep = OnboardingStep.Loading },
+                                    onGuest = { currentStep = OnboardingStep.Language }
+                                )
+                            }
+                            OnboardingStep.Login -> {
+                                Text(
+                                    text = s.loginTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = contentColor,
+                                    textAlign = TextAlign.Center
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    OutlinedTextField(
+                                        value = email,
+                                        onValueChange = { email = it },
+                                        label = { Text(s.email) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = password,
+                                        onValueChange = { password = it },
+                                        label = { Text(s.password) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        visualTransformation = PasswordVisualTransformation()
+                                    )
+                                }
+                                Button(
+                                    onClick = { currentStep = OnboardingStep.Loading },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(25.dp)
+                                ) {
+                                    Text(s.login)
+                                }
+                                TextButton(
+                                    onClick = { currentStep = OnboardingStep.Welcome },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(s.backDescription)
+                                }
+                            }
+                            OnboardingStep.Register -> {
+                                Text(
+                                    text = s.registrationTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = contentColor,
+                                    textAlign = TextAlign.Center
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    OutlinedTextField(
+                                        value = username,
+                                        onValueChange = { username = it },
+                                        label = { Text(s.username) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = email,
+                                        onValueChange = { email = it },
+                                        label = { Text(s.email) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = password,
+                                        onValueChange = { password = it },
+                                        label = { Text(s.password) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        visualTransformation = PasswordVisualTransformation()
+                                    )
+                                }
+                                Button(
+                                    onClick = { currentStep = OnboardingStep.Language }, // Continue to settings
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(25.dp)
+                                ) {
+                                    Text(s.next)
+                                }
+                                TextButton(
+                                    onClick = { currentStep = OnboardingStep.Welcome },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(s.backDescription)
+                                }
+                            }
+                            OnboardingStep.Language -> {
+                                Text(
+                                    text = s.chooseLanguage,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = contentColor,
+                                    textAlign = TextAlign.Center
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    LanguageOption(
+                                        language = Language.EN,
+                                        selected = currentLanguage == Language.EN,
+                                        onClick = { currentLanguage = Language.EN }
+                                    )
+                                    LanguageOption(
+                                        language = Language.ES,
+                                        selected = currentLanguage == Language.ES,
+                                        onClick = { currentLanguage = Language.ES }
+                                    )
+                                }
+                                Button(
+                                    onClick = { currentStep = OnboardingStep.Theme },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(25.dp)
+                                ) {
+                                    Text(s.next)
+                                }
+                            }
+                            OnboardingStep.Theme -> {
+                                Text(
+                                    text = s.chooseTheme,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = contentColor,
+                                    textAlign = TextAlign.Center
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ThemeCard(
+                                        dark = false,
+                                        selected = !isDarkMode,
+                                        onClick = { isDarkMode = false },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    ThemeCard(
+                                        dark = true,
+                                        selected = isDarkMode,
+                                        onClick = { isDarkMode = true },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Button(
+                                    onClick = { currentStep = OnboardingStep.Daltonic },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(25.dp)
+                                ) {
+                                    Text(s.next)
+                                }
+                            }
+                            OnboardingStep.Daltonic -> {
+                                Text(
+                                    text = s.chooseDaltonism,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = contentColor,
+                                    textAlign = TextAlign.Center
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    DaltonicCard(
+                                        enabled = false,
+                                        selected = !isDaltonic,
+                                        onClick = { isDaltonic = false },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    DaltonicCard(
+                                        enabled = true,
+                                        selected = isDaltonic,
+                                        onClick = { isDaltonic = true },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Button(
+                                    onClick = { currentStep = OnboardingStep.Loading },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(25.dp)
+                                ) {
+                                    Text(s.finish)
+                                }
+                            }
+                            OnboardingStep.Loading -> {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "${s.welcomeUser} ${if (username.isNotEmpty()) username else ""}",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = s.configuring,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
                     }
-                    
-                    Spacer(Modifier.height(32.dp))
-                    
+                }
+
+                // Persistent Disclaimer (only show on settings steps)
+                if (currentStep == OnboardingStep.Language || currentStep == OnboardingStep.Theme || currentStep == OnboardingStep.Daltonic) {
                     Text(
                         text = s.onboardingDisclaimer,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        color = if (currentStep == OnboardingStep.Theme && isDarkMode) Color(0xFFE6E1E5).copy(alpha = 0.7f)
+                                else if (currentStep == OnboardingStep.Theme && !isDarkMode) Color(0xFF1C1B1F).copy(alpha = 0.7f)
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
-                    Spacer(Modifier.height(16.dp))
                 }
             }
+
         }
     }
 }
 
 @Composable
-private fun LanguageOption(label: String, selected: Boolean, onClick: () -> Unit) {
-    val scale by animateFloatAsState(
-        targetValue = if (selected) 1.1f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "scale"
-    )
-    val borderAlpha by animateFloatAsState(
-        targetValue = if (selected) 1f else 0f,
-        label = "border"
+fun AnimatedGradientBackground(baseColor: Color) {
+    val infiniteTransition = rememberInfiniteTransition(label = "background_anim")
+    val t by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 2f * Math.PI.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(20000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "t"
     )
 
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-        tonalElevation = if (selected) 8.dp else 2.dp,
+    val color1 = baseColor
+    val color2 = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+
+    // Animate gradient center
+    val x = 0.5f + 0.3f * cos(t)
+    val y = 0.5f + 0.3f * sin(t)
+
+    Box(
         modifier = Modifier
-            .size(140.dp, 100.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .border(
-                width = 2.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = borderAlpha),
-                shape = RoundedCornerShape(16.dp)
-            )
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+            .fillMaxSize()
+            .background(
+                brush = Brush.radialGradient(
+                    colors = listOf(color2, color1),
+                    center = Offset(x * 2000f, y * 2000f), // Approximate screen size scaling
+                    radius = 1500f
                 )
-                if (selected) {
-                    Spacer(Modifier.height(8.dp))
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
+            )
+    )
+}
+
+@Composable
+private fun LanguageOption(
+    language: Language,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (language == Language.EN) "English" else "Español",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f)
+            )
+            if (selected) {
+                Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         }
     }
 }
 
 @Composable
-private fun ThemePreviewOption(
+private fun ThemeCard(
     dark: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
-    label: String
+    modifier: Modifier = Modifier
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (selected) 1.1f else 1.0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "scale"
-    )
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .aspectRatio(0.7f)
+            .border(2.dp, borderColor, MaterialTheme.shapes.medium),
+        elevation = CardDefaults.cardElevation(if (selected) 8.dp else 2.dp)
+    ) {
         Box(
             modifier = Modifier
-                .size(120.dp, 180.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                }
-                .clip(RoundedCornerShape(16.dp))
-                .border(
-                    width = if (selected) 4.dp else 1.dp,
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                    shape = RoundedCornerShape(16.dp)
-                )
+                .fillMaxSize()
                 .background(if (dark) Color(0xFF1C1B1F) else Color(0xFFFFFBFE))
-                .clickable(onClick = onClick)
         ) {
-            Column(Modifier.padding(16.dp)) {
-                // Mock UI
+            // Mock UI
+            Column(Modifier.padding(12.dp)) {
                 Box(
                     Modifier
-                        .size(40.dp)
+                        .size(32.dp)
                         .clip(CircleShape)
                         .background(if (dark) Color(0xFFD0BCFF) else Color(0xFF6750A4))
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(12.dp)
+                        .height(8.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(if (dark) Color(0xFF49454F) else Color(0xFFE7E0EC))
                 )
                 Spacer(Modifier.height(8.dp))
                 Box(
                     Modifier
-                        .width(70.dp)
-                        .height(12.dp)
+                        .width(60.dp)
+                        .height(8.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(if (dark) Color(0xFF49454F) else Color(0xFFE7E0EC))
                 )
-                Spacer(Modifier.weight(1f))
-                // FAB mock
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .align(Alignment.End)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (dark) Color(0xFFD0BCFF) else Color(0xFF6750A4))
-                )
             }
-            
+
             if (selected) {
-                Box(
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
-                        .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        .padding(4.dp)
+                        .background(MaterialTheme.colorScheme.surface, CircleShape)
+                )
+            }
+
+            Text(
+                text = if (dark) "Dark" else "Light",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(12.dp),
+                color = if (dark) Color.White else Color.Black,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun DaltonicCard(
+    enabled: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .aspectRatio(0.7f)
+            .border(2.dp, borderColor, MaterialTheme.shapes.medium),
+        elevation = CardDefaults.cardElevation(if (selected) 8.dp else 2.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+        ) {
+            // Mock UI showing tuner colors
+            Column(
+                Modifier.padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                // Tuned
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) Color(0xFF00BCD4) else Color.Green)
+                )
+                Spacer(Modifier.height(8.dp))
+                // Sharp
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) Color(0xFFFF9800) else Color.Red)
+                )
+                Spacer(Modifier.height(8.dp))
+                // Flat
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(if (enabled) Color(0xFFFF00FF) else Color.Blue)
+                )
+            }
+
+            if (selected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .background(MaterialTheme.colorScheme.surface, CircleShape)
+                )
+            }
+
+            Text(
+                text = if (enabled) "On" else "Off",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(12.dp),
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun WelcomeStep(
+    s: AppStrings,
+    onLogin: () -> Unit,
+    onRegister: () -> Unit,
+    onGoogle: () -> Unit,
+    onGuest: () -> Unit
+) {
+    var visible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        visible = true
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(32.dp),
+        modifier = Modifier.padding(horizontal = 16.dp)
+    ) {
+        // Logo & Header
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(1000)) + slideInVertically { 50 }
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_logo),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth(1f)
+                        .aspectRatio(1.2f)
+                )
+
+            }
+        }
+
+        // Actions
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(1000, delayMillis = 300)) + slideInVertically { 50 }
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Primary CTA: Create Account
+                Button(
+                    onClick = onRegister,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(16.dp)
+                    Text(
+                        text = s.registrationTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Secondary CTA: Login
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+
+                    TextButton(onClick = onLogin) {
+                        Text(
+                            text = s.login,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Divider
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HorizontalDivider(modifier = Modifier.weight(1f))
+                    Text(
+                        text = s.orSeparator,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.weight(1f))
+                }
+
+                // Google Sign In
+                OutlinedButton(
+                    onClick = onGoogle,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_google_logo),
+                        contentDescription = "Google Logo",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = s.googleSignIn,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                // Guest Option
+                TextButton(
+                    onClick = onGuest,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(
+                        text = s.continueGuest,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.secondary
                     )
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-        )
     }
 }
-
-// Helper for shadow
-fun Modifier.shadow(
-    elevation: androidx.compose.ui.unit.Dp,
-    shape: androidx.compose.ui.graphics.Shape = androidx.compose.ui.graphics.RectangleShape,
-    clip: Boolean = elevation > 0.dp,
-    ambientColor: Color = androidx.compose.ui.graphics.Color.Black,
-    spotColor: Color = androidx.compose.ui.graphics.Color.Black,
-): Modifier = this.then(
-    Modifier.graphicsLayer {
-        this.shadowElevation = elevation.toPx()
-        this.shape = shape
-        this.clip = clip
-        this.ambientShadowColor = ambientColor
-        this.spotShadowColor = spotColor
-    }
-)
