@@ -92,6 +92,19 @@ interface AppStrings {
     val configuring: String
     val welcomeSubtitle: String
     val orSeparator: String
+
+    // Tutorial
+    val tutorialTitle: String
+    val tutorialMessage: String
+    val tutorialAccept: String
+    val tutorialDeny: String
+    val tutorialStepNewCategory: String
+    val tutorialStepFab: String
+    val tutorialStepImport: String
+    val tutorialStepLongPress: String
+    val tutorialStepRename: String
+    val tutorialStepOpen: String
+    val tutorialExit: String
 }
 
 object StringsEs : AppStrings {
@@ -171,6 +184,18 @@ object StringsEs : AppStrings {
     override val configuring = "Estamos configurándolo todo..."
     override val welcomeSubtitle = "Tu compañero creativo"
     override val orSeparator = "o"
+
+    override val tutorialTitle = "¿Quieres aprender a usar la app?"
+    override val tutorialMessage = "Te enseñaremos lo básico en unos sencillos pasos."
+    override val tutorialAccept = "Sí, enséñame"
+    override val tutorialDeny = "No, gracias"
+    override val tutorialStepNewCategory = "Pulsa aquí para crear una nueva categoría"
+    override val tutorialStepFab = "Ahora pulsa el botón +"
+    override val tutorialStepImport = "Selecciona 'Importar PDF'"
+    override val tutorialStepLongPress = "Mantén pulsado el archivo para ver opciones"
+    override val tutorialStepRename = "Elige 'Renombrar'"
+    override val tutorialStepOpen = "¡Genial! Pulsa para abrir tu partitura"
+    override val tutorialExit = "Salir del tutorial"
 }
 
 object StringsEn : AppStrings {
@@ -250,6 +275,18 @@ object StringsEn : AppStrings {
     override val configuring = "Configuring everything..."
     override val welcomeSubtitle = "Your creative companion"
     override val orSeparator = "or"
+
+    override val tutorialTitle = "Want to learn how to use the app?"
+    override val tutorialMessage = "We'll show you the basics in a few simple steps."
+    override val tutorialAccept = "Yes, show me"
+    override val tutorialDeny = "No, thanks"
+    override val tutorialStepNewCategory = "Tap here to create a new category"
+    override val tutorialStepFab = "Now tap the + button"
+    override val tutorialStepImport = "Select 'Import PDF'"
+    override val tutorialStepLongPress = "Long press the file to see options"
+    override val tutorialStepRename = "Choose 'Rename'"
+    override val tutorialStepOpen = "Great! Tap to open your score"
+    override val tutorialExit = "Exit tutorial"
 }
 
 fun stringsFor(language: Language): AppStrings {

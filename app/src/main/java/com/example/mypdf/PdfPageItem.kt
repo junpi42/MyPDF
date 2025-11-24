@@ -51,6 +51,8 @@ fun PdfPageItem(
     var canvasW by remember { mutableStateOf(0f) }
     var canvasH by remember { mutableStateOf(0f) }
     var redrawTrigger by remember { mutableStateOf(0) }
+    // Centro del borrador en coordenadas normalizadas (0-1) sobre el lienzo.
+    var eraserCenter by remember { mutableStateOf<Offset?>(null) }
 
     fun toNorm(o: Offset): Offset =
         if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
@@ -126,15 +128,24 @@ fun PdfPageItem(
                                         currentPath.clear()
 
                                         val down = awaitFirstDown()
-                                        currentPath.add(toNorm(down.position))
+                                        val downNorm = toNorm(down.position)
+                                        currentPath.add(downNorm)
+                                        // Actualizamos la posición inicial del borrador
+                                        if (selectedTool == "eraser") {
+                                            eraserCenter = downNorm
+                                        }
 
                                         drag(down.id) { change ->
                                             change.consume()
 
-                                            currentPath.add(toNorm(change.position))
+                                            val newPointNorm = toNorm(change.position)
+                                            val lastPointNorm = if (currentPath.isNotEmpty()) currentPath.last() else newPointNorm
+                                            currentPath.add(newPointNorm)
 
                                             if (selectedTool == "eraser") {
-                                                onErase(currentPath.toList())
+                                                // Actualizamos centro del borrador y borramos sólo en el trayecto
+                                                eraserCenter = newPointNorm
+                                                onErase(listOf(lastPointNorm, newPointNorm))
                                                 redrawTrigger++
                                             }
                                         }
@@ -148,6 +159,7 @@ fun PdfPageItem(
                                                 } else basePoints
 
                                             if (selectedTool == "eraser") {
+                                                // Llamada final de borrado con todo el recorrido del borrador
                                                 onErase(final)
                                             } else {
                                                 onPathAdded(
@@ -158,6 +170,10 @@ fun PdfPageItem(
                                             }
                                         }
                                         currentPath.clear()
+                                        // Al terminar el gesto de borrado, ocultamos el círculo
+                                        if (selectedTool == "eraser") {
+                                            eraserCenter = null
+                                        }
                                     }
                                 }
                             } else Modifier
@@ -217,6 +233,22 @@ fun PdfPageItem(
                                 color = penColor,
                                 radius = (strokeWidth * size.width) / 2f,
                                 center = pp
+                            )
+                        }
+                    }
+
+                    // Dibuja el círculo del borrador mientras esté activo.
+                    if (selectedTool == "eraser") {
+                        eraserCenter?.let { centerNorm ->
+                            val centerPx = toPx(centerNorm)
+                            // El mismo threshold que en PdfViewerScreen (strokeWidth * 100)
+                            val radiusNorm = strokeWidth * 100f
+                            val radiusPx = radiusNorm * size.width
+                            drawCircle(
+                                color = Color.Gray.copy(alpha = 0.35f),
+                                radius = radiusPx,
+                                center = centerPx,
+                                style = Stroke(width = 2f)
                             )
                         }
                     }

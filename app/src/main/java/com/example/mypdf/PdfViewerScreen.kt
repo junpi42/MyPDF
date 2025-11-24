@@ -446,25 +446,72 @@ fun PdfViewerScreen(
                                 },
                                 onErase = { eraserPoints ->
                                     val page = annotations.getOrPut(index) { PageAnnotations(index) }
-                                    val toRemove = mutableSetOf<Int>()
-                                    page.paths.forEachIndexed { pIdx, p ->
+                                    val resultPaths = mutableListOf<DrawingPath>()
+                                    var changed = false
+                                    val threshold = strokeWidth * 100
+
+                                    page.paths.forEach { p ->
                                         val pts = p.points
-                                        if (pts.size < 2) return@forEachIndexed
-                                        var hit = false
-                                        for (i in 0 until pts.size - 1) {
-                                            val a = pts[i]; val b = pts[i + 1]
-                                            if (eraserPoints.any { e ->
-                                                    distancePointToSegment(e, a, b) <= (strokeWidth * 100)
+                                        if (pts.isEmpty()) return@forEach
+
+                                        val splitParts = mutableListOf<DrawingPath>()
+                                        val currentSegmentPoints = mutableListOf<androidx.compose.ui.geometry.Offset>()
+                                        var pathWasHit = false
+
+                                        for (i in pts.indices) {
+                                            val point = pts[i]
+                                            // Check if point is hit
+                                            val isPointHit = eraserPoints.any { e ->
+                                                val dx = e.x - point.x
+                                                val dy = e.y - point.y
+                                                (dx * dx + dy * dy) <= (threshold * threshold)
+                                            }
+
+                                            if (isPointHit) {
+                                                pathWasHit = true
+                                                if (currentSegmentPoints.isNotEmpty()) {
+                                                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                                    currentSegmentPoints.clear()
                                                 }
-                                            ) {
-                                                hit = true; break
+                                                continue
+                                            }
+
+                                            // Point is valid
+                                            if (currentSegmentPoints.isEmpty()) {
+                                                currentSegmentPoints.add(point)
+                                            } else {
+                                                val prev = currentSegmentPoints.last()
+                                                // Check segment prev-point
+                                                val isSegmentHit = eraserPoints.any { e ->
+                                                    distancePointToSegment(e, prev, point) <= threshold
+                                                }
+
+                                                if (isSegmentHit) {
+                                                    pathWasHit = true
+                                                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                                    currentSegmentPoints.clear()
+                                                    currentSegmentPoints.add(point)
+                                                } else {
+                                                    currentSegmentPoints.add(point)
+                                                }
                                             }
                                         }
-                                        if (hit) toRemove.add(pIdx)
+
+                                        if (currentSegmentPoints.isNotEmpty()) {
+                                            splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                                        }
+
+                                        if (pathWasHit) {
+                                            changed = true
+                                            resultPaths.addAll(splitParts)
+                                        } else {
+                                            resultPaths.add(p)
+                                        }
                                     }
-                                    if (toRemove.isNotEmpty()) {
-                                        toRemove.sortedDescending()
-                                            .forEach { page.paths.removeAt(it) }
+
+                                    if (changed) {
+                                        page.paths.clear()
+                                        page.paths.addAll(resultPaths)
                                         scheduleSave()
                                     }
                                 },
