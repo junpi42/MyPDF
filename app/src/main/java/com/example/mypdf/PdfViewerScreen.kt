@@ -50,6 +50,8 @@ fun PdfViewerScreen(
     file: File,
     onBack: () -> Unit,
     isDarkMode: Boolean,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language
 ) {
     val context = LocalContext.current
@@ -493,6 +495,7 @@ fun PdfViewerScreen(
                 if (tunerOn) {
                     TunnerSmall(
                         tunner = tunner,
+                        isDaltonic = isDaltonic,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .padding(top = (topBarHeight - 44.dp) / 2)
@@ -537,6 +540,8 @@ fun PdfViewerScreen(
                 if (showTunerSettings) {
                     TunerSettingsDialog(
                         tuner = tunner,
+                        isDaltonic = isDaltonic,
+                        onToggleDaltonic = onToggleDaltonic,
                         onDismiss = { showTunerSettings = false }
                     )
                 }

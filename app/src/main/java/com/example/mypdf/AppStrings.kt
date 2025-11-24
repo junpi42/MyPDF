@@ -69,11 +69,29 @@ interface AppStrings {
     val welcomeTitle: String
     val chooseLanguage: String
     val chooseTheme: String
+    val chooseDaltonism: String
 
 
     val daltonismOption: String
     val next: String
     val onboardingDisclaimer: String
+    val finish: String
+
+    // Registration / Login
+    val registrationTitle: String
+    val loginTitle: String
+    val username: String
+    val email: String
+    val password: String
+    val register: String
+    val login: String
+    val googleSignIn: String
+    val continueGuest: String
+    val skip: String
+    val welcomeUser: String
+    val configuring: String
+    val welcomeSubtitle: String
+    val orSeparator: String
 }
 
 object StringsEs : AppStrings {
@@ -114,7 +132,7 @@ object StringsEs : AppStrings {
 
     override val tunerSettingsTitle = "Ajustes del afinador"
     override val tunerNoisyEnv = "Ambiente ruidoso"
-    override val tunerDaltonismSoon = "Daltonismo (próximamente)"
+    override val tunerDaltonismSoon = "Daltonismo"
 
     override val backDescription = "Volver"
     override val tunerDescription = "Afinador"
@@ -132,11 +150,27 @@ object StringsEs : AppStrings {
     override val welcomeTitle = "Bienvenido"
     override val chooseLanguage = "Elige tu idioma"
     override val chooseTheme = "Elige un tema"
+    override val chooseDaltonism = "Modo daltónico"
     override val finish = "Finalizar"
-    override val finish = "Finalizar"
-    override val daltonismOption = "Daltonismo (próximamente)"
+
+    override val daltonismOption = "Daltonismo"
     override val next = "Siguiente"
     override val onboardingDisclaimer = "No te preocupes, puedes volver a cambiar esto en configuración."
+
+    override val registrationTitle = "Crear cuenta"
+    override val loginTitle = "Iniciar sesión"
+    override val username = "Nombre de usuario"
+    override val email = "Correo electrónico"
+    override val password = "Contraseña"
+    override val register = "Registrarse"
+    override val login = "Entrar"
+    override val googleSignIn = "Continuar con Google"
+    override val continueGuest = "Continuar como invitado"
+    override val skip = "Omitir"
+    override val welcomeUser = "Bienvenido"
+    override val configuring = "Estamos configurándolo todo..."
+    override val welcomeSubtitle = "Tu compañero creativo"
+    override val orSeparator = "o"
 }
 
 object StringsEn : AppStrings {
@@ -177,7 +211,7 @@ object StringsEn : AppStrings {
 
     override val tunerSettingsTitle = "Tuner settings"
     override val tunerNoisyEnv = "Noisy environment"
-    override val tunerDaltonismSoon = "Color blindness (coming soon)"
+    override val tunerDaltonismSoon = "Color blindness"
 
     override val backDescription = "Back"
     override val tunerDescription = "Tuner"
@@ -195,11 +229,27 @@ object StringsEn : AppStrings {
     override val welcomeTitle = "Welcome"
     override val chooseLanguage = "Choose your language"
     override val chooseTheme = "Choose a theme"
+    override val chooseDaltonism = "Color blindness mode"
     override val finish = "Finish"
-    override val finish = "Finish"
-    override val daltonismOption = "Color blindness (coming soon)"
+
+    override val daltonismOption = "Color blindness"
     override val next = "Next"
     override val onboardingDisclaimer = "Don't worry, you can change this later in settings."
+
+    override val registrationTitle = "Create account"
+    override val loginTitle = "Log in"
+    override val username = "Username"
+    override val email = "Email"
+    override val password = "Password"
+    override val register = "Sign up"
+    override val login = "Log in"
+    override val googleSignIn = "Continue with Google"
+    override val continueGuest = "Continue as Guest"
+    override val skip = "Skip"
+    override val welcomeUser = "Welcome"
+    override val configuring = "Configuring everything..."
+    override val welcomeSubtitle = "Your creative companion"
+    override val orSeparator = "or"
 }
 
 fun stringsFor(language: Language): AppStrings {

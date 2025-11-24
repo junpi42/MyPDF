@@ -118,6 +118,8 @@ class MainActivity : ComponentActivity() {
                             AppRoot(
                                 isDarkMode = darkMode,
                                 onToggleDarkMode = { darkMode = !darkMode; save() },
+                                isDaltonic = isDaltonic,
+                                onToggleDaltonic = { isDaltonic = !isDaltonic; save() },
                                 language = language,
                                 onToggleLanguage = { 
                                     language = if (language == Language.EN) Language.ES else Language.EN
@@ -138,6 +140,8 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot(
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language,
     onToggleLanguage: () -> Unit,
     gridScale: Float,
@@ -156,6 +160,8 @@ private fun AppRoot(
                     onOpen = { selectedPath = it.absolutePath },
                     isDarkMode = isDarkMode,
                     onToggleDarkMode = onToggleDarkMode,
+                    isDaltonic = isDaltonic,
+                    onToggleDaltonic = onToggleDaltonic,
                     language = language,
                     onToggleLanguage = onToggleLanguage,
                     gridScale = gridScale,
@@ -166,6 +172,8 @@ private fun AppRoot(
                     file = selectedFile,
                     onBack = { selectedPath = null },
                     isDarkMode = isDarkMode,
+                    isDaltonic = isDaltonic,
+                    onToggleDaltonic = onToggleDaltonic,
                     language = language
                 )
             }
@@ -179,6 +187,8 @@ fun LibraryScreen(
     onOpen: (File) -> Unit,
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language,
     onToggleLanguage: () -> Unit,
     gridScale: Float,
@@ -756,6 +766,8 @@ fun LibraryScreen(
         SettingsDialog(
             isDarkMode = isDarkMode,
             onToggleDarkMode = onToggleDarkMode,
+            isDaltonic = isDaltonic,
+            onToggleDaltonic = onToggleDaltonic,
             language = language,
             onToggleLanguage = onToggleLanguage,
             gridScale = gridScale,
