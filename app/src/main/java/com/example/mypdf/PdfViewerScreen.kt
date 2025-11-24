@@ -65,7 +65,8 @@ fun PdfViewerScreen(
 
     var selectedTool by remember { mutableStateOf("none") }
     var penColor by remember { mutableStateOf(Color.Red) }
-    var strokeWidth by remember { mutableFloatStateOf(0.006f) }
+    var penStrokeWidth by remember { mutableFloatStateOf(0.006f) }
+    var eraserRadiusNorm by remember { mutableFloatStateOf(0.03f) }
     var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
 
@@ -348,7 +349,8 @@ fun PdfViewerScreen(
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = "none",
                                 penColor = penColor,
-                                strokeWidth = strokeWidth,
+                                penStrokeWidth = penStrokeWidth,
+                                eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = {},
                                 onErase = {},
@@ -438,7 +440,8 @@ fun PdfViewerScreen(
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = selectedTool,
                                 penColor = penColor,
-                                strokeWidth = strokeWidth,
+                                penStrokeWidth = penStrokeWidth,
+                                eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = { path ->
                                     annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
@@ -448,11 +451,35 @@ fun PdfViewerScreen(
                                     val page = annotations.getOrPut(index) { PageAnnotations(index) }
                                     val resultPaths = mutableListOf<DrawingPath>()
                                     var changed = false
-                                    val threshold = strokeWidth * 100
+                                    val threshold = eraserRadiusNorm
 
                                     page.paths.forEach { p ->
                                         val pts = p.points
-                                        if (pts.isEmpty()) return@forEach
+                                        if (pts.isEmpty()) {
+                                            resultPaths.add(p)
+                                            return@forEach
+                                        }
+
+                                        // Optimization: Check bounding box first
+                                        var minX = Float.MAX_VALUE; var maxX = Float.MIN_VALUE
+                                        var minY = Float.MAX_VALUE; var maxY = Float.MIN_VALUE
+                                        pts.forEach { pt ->
+                                            if (pt.x < minX) minX = pt.x
+                                            if (pt.x > maxX) maxX = pt.x
+                                            if (pt.y < minY) minY = pt.y
+                                            if (pt.y > maxY) maxY = pt.y
+                                        }
+                                        // Expand bounds by threshold
+                                        minX -= threshold; maxX += threshold
+                                        minY -= threshold; maxY += threshold
+
+                                        val inBounds = eraserPoints.any { e ->
+                                            e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY
+                                        }
+                                        if (!inBounds) {
+                                            resultPaths.add(p)
+                                            return@forEach
+                                        }
 
                                         val splitParts = mutableListOf<DrawingPath>()
                                         val currentSegmentPoints = mutableListOf<androidx.compose.ui.geometry.Offset>()
@@ -556,12 +583,18 @@ fun PdfViewerScreen(
                 StyledLeftToolBar(
                     selectedTool = selectedTool,
                     penColor = penColor,
-                    strokeWidth = strokeWidth,
+                    strokeWidth = if (selectedTool == "pen") penStrokeWidth else eraserRadiusNorm,
                     smoothingEnabled = smoothingEnabled,
                     onSelectTool = { selectedTool = it },
                     onColorClick = { showColorPicker = true },
                     onColorChanged = { penColor = it },
-                    onStrokeChange = { strokeWidth = it },
+                    onStrokeChange = { value ->
+                        if (selectedTool == "pen") {
+                            penStrokeWidth = value
+                        } else if (selectedTool == "eraser") {
+                            eraserRadiusNorm = value.coerceIn(0.015f, 0.1f)
+                        }
+                    },
                     onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
                     onUndo = {
                         val currentPage = listState.firstVisibleItemIndex
