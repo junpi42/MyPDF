@@ -10,7 +10,10 @@ fun PdfEditScreen(
     isDarkMode: Boolean,
     isDaltonic: Boolean,
     onToggleDaltonic: () -> Unit,
-    language: Language
+    language: Language,
+    tutorialState: TutorialState,
+    onTutorialStateChange: (TutorialState) -> Unit,
+    onTutorialComplete: () -> Unit
 ) {
     PdfViewerScreen(
         file = file,
@@ -18,6 +21,9 @@ fun PdfEditScreen(
         isDarkMode = isDarkMode,
         isDaltonic = isDaltonic,
         onToggleDaltonic = onToggleDaltonic,
-        language = language
+        language = language,
+        tutorialState = tutorialState,
+        onTutorialStateChange = onTutorialStateChange,
+        onTutorialComplete = onTutorialComplete
     )
 }

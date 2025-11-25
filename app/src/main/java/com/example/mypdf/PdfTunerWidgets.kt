@@ -30,7 +30,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-// Widgets visuales del afinador extraídos de PdfViewerScreen
+// Widgets visuales del afinador usados en el visor PDF
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -152,102 +152,6 @@ fun TunnerSmall(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-        }
-    }
-}
-
-@Composable
-fun NeedleTunerOverlay(
-    tunner: AudioTuner,
-    modifier: Modifier = Modifier
-) {
-    val result by tunner.tuningState.collectAsState(initial = null)
-    val cents = (result?.centsOff ?: 0.0).coerceIn(-50.0, 50.0)
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(130.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        Surface(
-            shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
-            tonalElevation = 8.dp,
-            color = Color(0xE0222222),
-            modifier = Modifier
-                .fillMaxWidth(0.45f)
-                .fillMaxHeight()
-        ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-            ) {
-                val w = size.width
-                val h = size.height
-                val radius = kotlin.math.min(w, h) * 0.85f
-                val topMargin = 4.dp.toPx()
-                val center = Offset(w / 2f, radius + topMargin)
-
-                val startAngle = 200f
-                val endAngle = 340f
-                val centerAngle = 270f
-                val sweepLeft = centerAngle - startAngle
-                val sweepRight = endAngle - centerAngle
-
-                drawArc(
-                    color = Color(0xFF1E88E5),
-                    startAngle = startAngle,
-                    sweepAngle = sweepLeft,
-                    useCenter = false,
-                    style = Stroke(width = 3.dp.toPx())
-                )
-
-                drawArc(
-                    color = Color(0xFFE53935),
-                    startAngle = centerAngle,
-                    sweepAngle = sweepRight,
-                    useCenter = false,
-                    style = Stroke(width = 3.dp.toPx())
-                )
-
-                val innerR = radius * 0.55f
-                val outerR = radius * 0.98f
-                val leftTriAngle = centerAngle - 6f
-                val rightTriAngle = centerAngle + 6f
-
-                fun polar(angleDeg: Float, r: Float): Offset {
-                    val rad = Math.toRadians(angleDeg.toDouble()).toFloat()
-                    return Offset(
-                        center.x + kotlin.math.cos(rad) * r,
-                        center.y + kotlin.math.sin(rad) * r
-                    )
-                }
-
-                val triPath = Path().apply {
-                    moveTo(polar(centerAngle, innerR).x, polar(centerAngle, innerR).y)
-                    lineTo(polar(leftTriAngle, outerR).x, polar(leftTriAngle, outerR).y)
-                    lineTo(polar(rightTriAngle, outerR).x, polar(rightTriAngle, outerR).y)
-                    close()
-                }
-                drawPath(triPath, color = Color(0xFF4CAF50))
-
-                val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
-                val needleAngle = centerAngle + normalized * 45f
-                val needleRad = Math.toRadians(needleAngle.toDouble()).toFloat()
-                val needleLength = radius * 0.9f
-                val end = Offset(
-                    x = center.x + kotlin.math.cos(needleRad) * needleLength,
-                    y = center.y + kotlin.math.sin(needleRad) * needleLength
-                )
-
-                drawLine(
-                    color = Color(0xFFE53935),
-                    start = center,
-                    end = end,
-                    strokeWidth = 4.dp.toPx()
-                )
-            }
         }
     }
 }

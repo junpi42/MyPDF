@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
@@ -86,6 +88,8 @@ fun TunerSettingsDialog(
     tuner: AudioTuner,
     isDaltonic: Boolean,
     onToggleDaltonic: () -> Unit,
+    extendedMode: Boolean,
+    onToggleExtendedMode: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val a4 by tuner.baseFrequency.collectAsState(initial = 442.0)
@@ -154,6 +158,15 @@ fun TunerSettingsDialog(
                     Text(s.tunerDaltonismSoon, style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = isDaltonic, onCheckedChange = { onToggleDaltonic() })
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(s.tunerExtendedMode, style = MaterialTheme.typography.bodyLarge)
+                    Switch(checked = extendedMode, onCheckedChange = { onToggleExtendedMode() })
+                }
             }
         },
         confirmButton = {
@@ -170,9 +183,10 @@ fun SettingsDialog(
     isDaltonic: Boolean,
     onToggleDaltonic: () -> Unit,
     language: Language,
-    onToggleLanguage: () -> Unit,
+    onLanguageChange: (Language) -> Unit,
     gridScale: Float,
     onGridScaleChange: (Float) -> Unit,
+    onResetTutorial: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val s = strings()
@@ -227,8 +241,37 @@ fun SettingsDialog(
                         Spacer(Modifier.width(16.dp))
                         Text(s.languageLabel, style = MaterialTheme.typography.titleMedium)
                     }
-                    Button(onClick = onToggleLanguage) {
-                        Text(if (language == Language.EN) "English" else "Español")
+                    
+                    Box {
+                        var expanded by remember { mutableStateOf(false) }
+                        OutlinedButton(onClick = { expanded = true }) {
+                            Text(when(language) {
+                                Language.EN -> "English"
+                                Language.ES -> "Español"
+                                Language.FR -> "Français"
+                                Language.IT -> "Italiano"
+                            })
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            Language.values().forEach { lang ->
+                                DropdownMenuItem(
+                                    text = { 
+                                        Text(when(lang) {
+                                            Language.EN -> "English"
+                                            Language.ES -> "Español"
+                                            Language.FR -> "Français"
+                                            Language.IT -> "Italiano"
+                                        }) 
+                                    },
+                                    onClick = {
+                                        onLanguageChange(lang)
+                                        expanded = false
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -247,6 +290,10 @@ fun SettingsDialog(
                     }
                     Switch(checked = isDaltonic, onCheckedChange = { onToggleDaltonic() })
                 }
+
+                Spacer(Modifier.height(8.dp))
+
+                MetronomeColorPreview(isDaltonic = isDaltonic)
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -267,6 +314,24 @@ fun SettingsDialog(
                 }
                 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // Reset Tutorial
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Reset Tutorial", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Button(onClick = onResetTutorial) {
+                        Text("Reset")
+                    }
+                }
+                
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 
                 // About
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -284,4 +349,62 @@ fun SettingsDialog(
         },
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
     )
+}
+
+@Composable
+private fun MetronomeColorPreview(isDaltonic: Boolean) {
+    val s = strings()
+    val label = if (isDaltonic) s.tunerDaltonismSoon else s.tunerNoisyEnv // reuse or create specific strings
+
+    val leftColor: Color
+    val centerColor: Color
+    val rightColor: Color
+
+    if (isDaltonic) {
+        leftColor = Color(0xFFAA6C39)   // equivalente al azul pero más distinguible
+        centerColor = Color(0xFFB39DDB) // franja central alternativa
+        rightColor = Color(0xFF80CBC4)  // equivalente al rojo en paleta accesible
+    } else {
+        leftColor = Color(0xFF1565C0)   // azul (desafinada por abajo)
+        centerColor = Color(0xFF2E7D32) // verde (afinada)
+        rightColor = Color(0xFFD32F2F)  // rojo (desafinada por arriba)
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = if (isDaltonic) "Daltonic metronome preview" else "Standard metronome preview",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .height(14.dp)
+                .clip(CircleShape),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(leftColor)
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(centerColor)
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(rightColor)
+            )
+        }
+    }
 }

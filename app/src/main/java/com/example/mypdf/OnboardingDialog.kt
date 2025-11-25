@@ -4,26 +4,29 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -126,7 +129,6 @@ fun OnboardingDialog(
                                     s = s,
                                     onLogin = { currentStep = OnboardingStep.Login },
                                     onRegister = { currentStep = OnboardingStep.Register },
-                                    onGoogle = { currentStep = OnboardingStep.Loading },
                                     onGuest = { currentStep = OnboardingStep.Language }
                                 )
                             }
@@ -161,6 +163,44 @@ fun OnboardingDialog(
                                 ) {
                                     Text(s.login)
                                 }
+
+                                // Divider
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    HorizontalDivider(modifier = Modifier.weight(1f))
+                                    Text(
+                                        text = s.orSeparator,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    HorizontalDivider(modifier = Modifier.weight(1f))
+                                }
+
+                                // Google Sign In
+                                OutlinedButton(
+                                    onClick = { currentStep = OnboardingStep.Loading },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(56.dp),
+                                    shape = RoundedCornerShape(28.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                                ) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_google_logo),
+                                        contentDescription = "Google Logo",
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        text = s.googleSignIn,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+
                                 TextButton(
                                     onClick = { currentStep = OnboardingStep.Welcome },
                                     modifier = Modifier.fillMaxWidth()
@@ -231,13 +271,23 @@ fun OnboardingDialog(
                                         selected = currentLanguage == Language.ES,
                                         onClick = { currentLanguage = Language.ES }
                                     )
+                                    LanguageOption(
+                                        language = Language.FR,
+                                        selected = currentLanguage == Language.FR,
+                                        onClick = { currentLanguage = Language.FR }
+                                    )
+                                    LanguageOption(
+                                        language = Language.IT,
+                                        selected = currentLanguage == Language.IT,
+                                        onClick = { currentLanguage = Language.IT }
+                                    )
                                 }
                                 Button(
                                     onClick = { currentStep = OnboardingStep.Theme },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(25.dp)
+                                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                                    shape = RoundedCornerShape(28.dp)
                                 ) {
-                                    Text(s.next)
+                                    Text(s.next, style = MaterialTheme.typography.titleMedium)
                                 }
                             }
                             OnboardingStep.Theme -> {
@@ -267,10 +317,10 @@ fun OnboardingDialog(
                                 }
                                 Button(
                                     onClick = { currentStep = OnboardingStep.Daltonic },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(25.dp)
+                                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                                    shape = RoundedCornerShape(28.dp)
                                 ) {
-                                    Text(s.next)
+                                    Text(s.next, style = MaterialTheme.typography.titleMedium)
                                 }
                             }
                             OnboardingStep.Daltonic -> {
@@ -280,30 +330,56 @@ fun OnboardingDialog(
                                     color = contentColor,
                                     textAlign = TextAlign.Center
                                 )
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+
+                                // Contenedor centrado para preview + switch
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
                                 ) {
-                                    DaltonicCard(
-                                        enabled = false,
-                                        selected = !isDaltonic,
-                                        onClick = { isDaltonic = false },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    DaltonicCard(
-                                        enabled = true,
-                                        selected = isDaltonic,
-                                        onClick = { isDaltonic = true },
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        StaticPdfTopBarPreview(
+                                            isDaltonic = isDaltonic,
+                                            modifier = Modifier
+                                                .scale(1.3f)
+                                                .padding(24.dp)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = s.daltonismOption,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = contentColor
+                                        )
+                                        Switch(
+                                            checked = isDaltonic,
+                                            onCheckedChange = { isDaltonic = it }
+                                        )
+                                    }
                                 }
+
                                 Button(
                                     onClick = { currentStep = OnboardingStep.Loading },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(25.dp)
+                                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                                    shape = RoundedCornerShape(28.dp)
                                 ) {
-                                    Text(s.finish)
+                                    Text(s.finish, style = MaterialTheme.typography.titleMedium)
                                 }
                             }
                             OnboardingStep.Loading -> {
@@ -395,7 +471,12 @@ private fun LanguageOption(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (language == Language.EN) "English" else "Español",
+                text = when(language) {
+                    Language.EN -> "English"
+                    Language.ES -> "Español"
+                    Language.FR -> "Français"
+                    Language.IT -> "Italiano"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f)
             )
@@ -478,75 +559,164 @@ private fun ThemeCard(
 }
 
 @Composable
-private fun DaltonicCard(
-    enabled: Boolean,
-    selected: Boolean,
-    onClick: () -> Unit,
+private fun StaticPdfTopBarPreview(
+    isDaltonic: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .aspectRatio(0.7f)
-            .border(2.dp, borderColor, MaterialTheme.shapes.medium),
-        elevation = CardDefaults.cardElevation(if (selected) 8.dp else 2.dp)
+    // We wrap it in a Box to scale it
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
     ) {
+        // We use a fixed width for the preview to ensure it looks like a phone screen top
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .width(420.dp) // Wider as requested
+                .height(100.dp) // Enough for top bar + tuner
+                .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            // Mock UI showing tuner colors
-            Column(
-                Modifier.padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                // Tuned
-                Box(
-                    Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(if (enabled) Color(0xFF00BCD4) else Color.Green)
-                )
-                Spacer(Modifier.height(8.dp))
-                // Sharp
-                Box(
-                    Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(if (enabled) Color(0xFFFF9800) else Color.Red)
-                )
-                Spacer(Modifier.height(8.dp))
-                // Flat
-                Box(
-                    Modifier
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .background(if (enabled) Color(0xFFFF00FF) else Color.Blue)
-                )
-            }
+            // 1. The Top Bar
+            StyledTopBar(
+                onBack = {},
+                tunerOn = true,
+                concertModeOn = false,
+                onTunerClick = {},
+                onConcertClick = {},
+                darkMode = false
+            )
 
-            if (selected) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .background(MaterialTheme.colorScheme.surface, CircleShape)
-                )
-            }
-
-            Text(
-                text = if (enabled) "On" else "Off",
+            // 2. The Tuner (Static)
+            StaticTunnerSmall(
+                note = "DO",
+                cents = 0.0,
+                isDaltonic = isDaltonic,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(12.dp),
-                color = MaterialTheme.colorScheme.onSurface,
+                    .align(Alignment.TopCenter)
+                    .padding(top = (64.dp - 44.dp) / 2) // Centered in 64dp top bar roughly
+                    .fillMaxWidth(0.7f)
+                    .height(44.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StaticTunnerSmall(
+    note: String,
+    cents: Double,
+    isDaltonic: Boolean,
+    modifier: Modifier = Modifier
+) {
+    // Define the 3 palette colors
+    val flatColor = if (isDaltonic) Color(0xFFFF00FF) else Color(0xFF1E88E5)
+    val inTuneColor = if (isDaltonic) Color(0xFF00BCD4) else Color(0xFF4CAF50)
+    val sharpColor = if (isDaltonic) Color(0xFFFF9800) else Color(0xFFE53935)
+
+    val markerColor = Color.White
+
+    val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.Gray), // Fallback
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val w = size.width
+            val h = size.height
+            val sectionWidth = w / 3f
+
+            // Draw 3 background sections
+            drawRect(
+                color = flatColor,
+                topLeft = Offset(0f, 0f),
+                size = androidx.compose.ui.geometry.Size(sectionWidth, h)
+            )
+            drawRect(
+                color = inTuneColor,
+                topLeft = Offset(sectionWidth, 0f),
+                size = androidx.compose.ui.geometry.Size(sectionWidth, h)
+            )
+            drawRect(
+                color = sharpColor,
+                topLeft = Offset(sectionWidth * 2, 0f),
+                size = androidx.compose.ui.geometry.Size(sectionWidth, h)
+            )
+
+            val centerX = w / 2f
+            val range = w * 0.42f
+            val x = centerX + normalized * range
+
+            val triW = h * 0.32f
+            val triH = h * 0.30f
+
+            val inTuneCents = 12.0
+            val maxCents = 50.0
+            val normLimit = (inTuneCents / maxCents).toFloat()
+
+            val tickLen = h * 0.18f
+            val tickStroke = h * 0.04f
+            val halfStroke = tickStroke / 2f
+
+            val topTri = Path().apply {
+                moveTo(x - triW / 2f, -halfStroke)
+                lineTo(x + triW / 2f, -halfStroke)
+                lineTo(x, triH)
+                close()
+            }
+
+            val bottomTri = Path().apply {
+                moveTo(x - triW / 2f, h + halfStroke)
+                lineTo(x + triW / 2f, h + halfStroke)
+                lineTo(x, h - triH)
+                close()
+            }
+
+            drawPath(topTri, color = markerColor)
+            drawPath(bottomTri, color = markerColor)
+
+            val xLeft = centerX - normLimit * range
+            val xRight = centerX + normLimit * range
+
+            drawLine(
+                color = markerColor,
+                start = Offset(xLeft, -halfStroke),
+                end = Offset(xLeft, tickLen),
+                strokeWidth = tickStroke
+            )
+            drawLine(
+                color = markerColor,
+                start = Offset(xRight, -halfStroke),
+                end = Offset(xRight, tickLen),
+                strokeWidth = tickStroke
+            )
+
+            drawLine(
+                color = markerColor,
+                start = Offset(xLeft, h + halfStroke),
+                end = Offset(xLeft, h - tickLen),
+                strokeWidth = tickStroke
+            )
+            drawLine(
+                color = markerColor,
+                start = Offset(xRight, h + halfStroke),
+                end = Offset(xRight, h - tickLen),
+                strokeWidth = tickStroke
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = note,
+                color = Color.Black,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -558,7 +728,6 @@ private fun WelcomeStep(
     s: AppStrings,
     onLogin: () -> Unit,
     onRegister: () -> Unit,
-    onGoogle: () -> Unit,
     onGuest: () -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -618,55 +787,21 @@ private fun WelcomeStep(
                 }
 
                 // Secondary CTA: Login
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-
-                    TextButton(onClick = onLogin) {
-                        Text(
-                            text = s.login,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // Divider
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    HorizontalDivider(modifier = Modifier.weight(1f))
-                    Text(
-                        text = s.orSeparator,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    HorizontalDivider(modifier = Modifier.weight(1f))
-                }
-
-                // Google Sign In
-                OutlinedButton(
-                    onClick = onGoogle,
+                Button(
+                    onClick = onLogin,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
                     shape = RoundedCornerShape(28.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_google_logo),
-                        contentDescription = "Google Logo",
-                        modifier = Modifier.size(24.dp)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
-                    Spacer(Modifier.width(12.dp))
+                ) {
                     Text(
-                        text = s.googleSignIn,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = s.login,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
 

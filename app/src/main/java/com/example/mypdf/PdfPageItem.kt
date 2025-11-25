@@ -38,8 +38,8 @@ fun PdfPageItem(
     editMode: Boolean,
     annotations: PageAnnotations,
     selectedTool: String,
-    penColor: Color,
-    penStrokeWidth: Float,
+    currentColor: Color,
+    currentStrokeWidth: Float,
     eraserRadiusNorm: Float,
     smoothingEnabled: Boolean,
     onPathAdded: (DrawingPath) -> Unit,
@@ -121,11 +121,12 @@ fun PdfPageItem(
                         canvasH = newSize.height.toFloat()
                     }
                     .then(
-                        if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
+                        if (editMode && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
                             Modifier.pointerInput(
                                 selectedTool,
                                 smoothingEnabled,
-                                penStrokeWidth,
+                                currentStrokeWidth,
+                                currentColor,
                                 canvasW,
                                 canvasH
                             ) {
@@ -170,7 +171,7 @@ fun PdfPageItem(
 
                                             val final = if (
                                                 smoothingEnabled &&
-                                                selectedTool == "pen" &&
+                                                (selectedTool == "marker" || selectedTool == "highlighter") &&
                                                 !tiny &&
                                                 basePoints.size > 1
                                             ) {
@@ -184,8 +185,8 @@ fun PdfPageItem(
                                                 onPathAdded(
                                                     DrawingPath(
                                                         final,
-                                                        penColor,
-                                                        penStrokeWidth,
+                                                        currentColor,
+                                                        currentStrokeWidth,
                                                         isEraser = false
                                                     )
                                                 )
@@ -234,7 +235,9 @@ fun PdfPageItem(
                     }
 
                     // Dibujar trazo actual
-                    if (selectedTool == "pen" && currentPath.isNotEmpty()) {
+                    if ((selectedTool == "marker" || selectedTool == "highlighter") && currentPath.isNotEmpty()) {
+                        val drawColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
+                        
                         if (currentPath.size > 1) {
                             val path = Path().apply {
                                 val first = toPx(currentPath.first())
@@ -246,14 +249,18 @@ fun PdfPageItem(
                             }
                             drawPath(
                                 path = path,
-                                color = penColor,
-                                style = Stroke(width = penStrokeWidth * size.width)
+                                color = drawColor,
+                                style = Stroke(
+                                    width = currentStrokeWidth * size.width,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    join = androidx.compose.ui.graphics.StrokeJoin.Round
+                                )
                             )
                         } else {
                             val pp = toPx(currentPath.first())
                             drawCircle(
-                                color = penColor,
-                                radius = (penStrokeWidth * size.width) / 2f,
+                                color = drawColor,
+                                radius = (currentStrokeWidth * size.width) / 2f,
                                 center = pp
                             )
                         }
@@ -266,10 +273,10 @@ fun PdfPageItem(
                             val radiusPx = eraserRadiusNorm * size.width
 
                             drawCircle(
-                                color = Color.Gray.copy(alpha = 0.35f),
+                                color = Color.Red.copy(alpha = 0.5f),
                                 radius = radiusPx,
                                 center = centerPx,
-                                style = Stroke(width = 2f)
+                                style = Stroke(width = 4f)
                             )
                         }
                     }

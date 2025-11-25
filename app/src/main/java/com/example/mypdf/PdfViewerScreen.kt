@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -27,6 +28,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.*
+import androidx.compose.animation.*
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -42,6 +48,10 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import kotlin.math.min
 
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+
 private const val TAG = "PDF_TIMING"
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -52,7 +62,10 @@ fun PdfViewerScreen(
     isDarkMode: Boolean,
     isDaltonic: Boolean,
     onToggleDaltonic: () -> Unit,
-    language: Language
+    language: Language,
+    tutorialState: TutorialState,
+    onTutorialStateChange: (TutorialState) -> Unit,
+    onTutorialComplete: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as Activity
@@ -63,23 +76,74 @@ fun PdfViewerScreen(
     // ===== MODO DIA / NOCHE =====
     val darkMode = isDarkMode
 
+    // Palette State
+    val paletteColors = remember { mutableStateListOf(Color.Red, Color.Blue, Color.Black) }
+    var selectedPaletteIndex by remember { mutableIntStateOf(0) }
+    val currentColor = paletteColors[selectedPaletteIndex]
+
     var selectedTool by remember { mutableStateOf("none") }
-    var penColor by remember { mutableStateOf(Color.Red) }
-    var penStrokeWidth by remember { mutableFloatStateOf(0.006f) }
+    // markerStrokeWidth is for MARKER
+    var markerStrokeWidth by remember { mutableFloatStateOf(0.006f) }
+    // highlighterStrokeWidth is for HIGHLIGHTER
+    var highlighterStrokeWidth by remember { mutableFloatStateOf(0.02f) }
+    
     var eraserRadiusNorm by remember { mutableFloatStateOf(0.03f) }
     var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
+
+
 
     // afinador
     var tunerOn by remember { mutableStateOf(false) }
     var concertModeOn by remember { mutableStateOf(false) }
     var showTunerSettings by remember { mutableStateOf(false) }
+    var tunerExtendedMode by remember { mutableStateOf(false) }
+
+    // Tutorial Targets
+    data class TutorialTargets(
+        val toolbox: Rect? = null,
+        val tunerButton: Rect? = null,
+        val concertButton: Rect? = null,
+        val tunerDisplay: Rect? = null,
+        val backButton: Rect? = null
+    )
+    var tutorialTargets by remember { mutableStateOf(TutorialTargets()) }
+
+    fun resolveTarget(step: TutorialStep): Rect? = when (step) {
+        TutorialStep.TOOLBOX -> tutorialTargets.toolbox
+        TutorialStep.TUNER_BUTTON -> tutorialTargets.tunerButton
+        TutorialStep.TUNER_ACTIVE -> tutorialTargets.tunerDisplay
+        TutorialStep.TUNER_MENU -> tutorialTargets.tunerDisplay
+        TutorialStep.CONCERT_MODE -> tutorialTargets.concertButton
+        TutorialStep.EXIT_CONCERT -> tutorialTargets.backButton
+        else -> null
+    }
+
+    fun advanceTutorial(next: TutorialStep) {
+        onTutorialStateChange(tutorialState.copy(step = next, targetRect = resolveTarget(next)))
+    }
+
+    LaunchedEffect(tutorialTargets, tutorialState.step) {
+        val resolved = resolveTarget(tutorialState.step)
+        if (resolved != tutorialState.targetRect) {
+            onTutorialStateChange(tutorialState.copy(targetRect = resolved))
+        }
+    }
 
     // zoom / pan
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var isPinching by remember { mutableStateOf(false) }
+
+    // Handle Back Press
+    BackHandler(enabled = true) {
+        if (concertModeOn) {
+            concertModeOn = false
+        } else {
+            onBack()
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -348,8 +412,8 @@ fun PdfViewerScreen(
                                 editMode = false,
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = "none",
-                                penColor = penColor,
-                                penStrokeWidth = penStrokeWidth,
+                                currentColor = currentColor,
+                                currentStrokeWidth = markerStrokeWidth,
                                 eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = {},
@@ -362,16 +426,56 @@ fun PdfViewerScreen(
                 }
 
                 // Botón flotante de casa para volver a edición
+                val highlightBack = tutorialState.step == TutorialStep.EXIT_CONCERT
+                val backScale = if (highlightBack) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "backPulseScale")
+                    infiniteTransition.animateFloat(
+                        initialValue = 1.5f,
+                        targetValue = 1.8f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "scale"
+                    ).value
+                } else {
+                    1f
+                }
+                
+                val backColor = if (highlightBack) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "backPulseColor")
+                    infiniteTransition.animateColor(
+                        initialValue = if (darkMode) Color.White else Color(0xFF111111),
+                        targetValue = MaterialTheme.colorScheme.primary,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "color"
+                    ).value
+                } else {
+                    if (darkMode) Color.White else Color(0xFF111111)
+                }
+
                 IconButton(
-                    onClick = { concertModeOn = false },
+                    onClick = {
+                        if (highlightBack) {
+                            advanceTutorial(TutorialStep.FINISHED)
+                        }
+                        concertModeOn = false
+                    },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(12.dp)
+                        .scale(backScale)
+                        .onGloballyPositioned { coordinates ->
+                             tutorialTargets = tutorialTargets.copy(backButton = coordinates.boundsInRoot())
+                        }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Home,
                         contentDescription = strings().backDescription,
-                        tint = if (darkMode) Color.White else Color(0xFF111111)
+                        tint = backColor
                     )
                 }
             } else {
@@ -439,12 +543,18 @@ fun PdfViewerScreen(
                                 editMode = true,
                                 annotations = annotations.getOrPut(index) { PageAnnotations(index) },
                                 selectedTool = selectedTool,
-                                penColor = penColor,
-                                penStrokeWidth = penStrokeWidth,
+                                currentColor = currentColor,
+                                currentStrokeWidth = markerStrokeWidth,
                                 eraserRadiusNorm = eraserRadiusNorm,
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = { path ->
-                                    annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(path)
+                                    val finalColor = if (selectedTool == "highlighter") {
+                                        currentColor.copy(alpha = 0.5f)
+                                    } else {
+                                        currentColor
+                                    }
+                                    val finalPath = path.copy(color = finalColor)
+                                    annotations.getOrPut(index) { PageAnnotations(index) }.paths.add(finalPath)
                                     scheduleSave()
                                 },
                                 onErase = { eraserPoints ->
@@ -547,6 +657,57 @@ fun PdfViewerScreen(
                             Spacer(Modifier.height(12.dp))
                         }
                     }
+
+                    // Barra lateral de herramientas sólo en modo edición
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight(0.75f)
+                            .align(Alignment.CenterStart)
+                    ) {
+                        StyledLeftToolBar(
+                            selectedTool = selectedTool,
+                            paletteColors = paletteColors,
+                            selectedPaletteIndex = selectedPaletteIndex,
+                            strokeWidth = when (selectedTool) {
+                                "marker" -> markerStrokeWidth
+                                "highlighter" -> highlighterStrokeWidth
+                                "eraser" -> eraserRadiusNorm
+                                else -> 0f
+                            },
+                            smoothingEnabled = smoothingEnabled,
+                            onSelectTool = { selectedTool = it },
+                            onPaletteSlotClicked = { index ->
+                                if (selectedPaletteIndex == index) {
+                                    // Clicked already selected -> Edit color
+                                    showColorPicker = true
+                                } else {
+                                    // Select this slot
+                                    selectedPaletteIndex = index
+                                }
+                            },
+                            onStrokeChange = { value ->
+                                when (selectedTool) {
+                                    "marker" -> markerStrokeWidth = value
+                                    "highlighter" -> highlighterStrokeWidth = value
+                                    "eraser" -> eraserRadiusNorm = value.coerceIn(0.015f, 0.1f)
+                                }
+                            },
+                            onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
+                            darkMode = darkMode,
+                            language = language,
+                            onToolboxPositioned = { tutorialTargets = tutorialTargets.copy(toolbox = it) }
+                        )
+                    }
+
+                    if (showColorPicker) {
+                        ColorPickerDialog(
+                            currentColor = currentColor,
+                            onColorSelected = { newColor ->
+                                paletteColors[selectedPaletteIndex] = newColor
+                            },
+                            onDismiss = { showColorPicker = false }
+                        )
+                    }
                 }
 
                 // Barra superior completa con botón de volver y modo concierto
@@ -554,6 +715,7 @@ fun PdfViewerScreen(
                     onBack = onBack,
                     tunerOn = tunerOn,
                     concertModeOn = concertModeOn,
+                    highlightBack = false,
                     onTunerClick = {
                         if (!tunerOn) {
                             ensureMicPermission { tunerOn = true }
@@ -563,69 +725,89 @@ fun PdfViewerScreen(
                     },
                     onConcertClick = { concertModeOn = !concertModeOn },
                     darkMode = darkMode,
-                )
-
-                // Afinador pequeño sólo en modo edición
-                if (tunerOn) {
-                    TunnerSmall(
-                        tunner = tunner,
-                        isDaltonic = isDaltonic,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = (topBarHeight - 44.dp) / 2)
-                            .fillMaxWidth(0.7f)
-                            .height(44.dp),
-                        onClick = { showTunerSettings = true }
-                    )
-                }
-
-                // Barra lateral de herramientas sólo en modo edición
-                StyledLeftToolBar(
-                    selectedTool = selectedTool,
-                    penColor = penColor,
-                    strokeWidth = if (selectedTool == "pen") penStrokeWidth else eraserRadiusNorm,
-                    smoothingEnabled = smoothingEnabled,
-                    onSelectTool = { selectedTool = it },
-                    onColorClick = { showColorPicker = true },
-                    onColorChanged = { penColor = it },
-                    onStrokeChange = { value ->
-                        if (selectedTool == "pen") {
-                            penStrokeWidth = value
-                        } else if (selectedTool == "eraser") {
-                            eraserRadiusNorm = value.coerceIn(0.015f, 0.1f)
+                    onTunerPositioned = { tutorialTargets = tutorialTargets.copy(tunerButton = it) },
+                    onConcertPositioned = { tutorialTargets = tutorialTargets.copy(concertButton = it) },
+                    onBackPositioned = { tutorialTargets = tutorialTargets.copy(backButton = it) },
+                    centerContent = {
+                        if (tunerOn) {
+                            TunnerSmall(
+                                tunner = tunner,
+                                isDaltonic = isDaltonic,
+                                modifier = Modifier
+                                    .then(if (tunerExtendedMode) Modifier.fillMaxWidth() else Modifier.fillMaxWidth(0.8f))
+                                    .height(44.dp)
+                                    .onGloballyPositioned { tutorialTargets = tutorialTargets.copy(tunerDisplay = it.boundsInRoot()) },
+                                onClick = { showTunerSettings = true }
+                            )
                         }
-                    },
-                    onToggleSmoothing = { smoothingEnabled = !smoothingEnabled },
-                    onUndo = {
-                        val currentPage = listState.firstVisibleItemIndex
-                        annotations[currentPage]?.paths?.removeLastOrNull()
-                        scheduleSave()
-                    },
-                    darkMode = darkMode,
-                    language = language,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = topBarHeight)
-                        .fillMaxHeight()
+                    }
                 )
-
-                if (showColorPicker) {
-                    ColorPickerDialog(
-                        currentColor = penColor,
-                        onColorSelected = { penColor = it },
-                        onDismiss = { showColorPicker = false }
-                    )
-                }
 
                 if (showTunerSettings) {
                     TunerSettingsDialog(
                         tuner = tunner,
                         isDaltonic = isDaltonic,
                         onToggleDaltonic = onToggleDaltonic,
+                        extendedMode = tunerExtendedMode,
+                        onToggleExtendedMode = { tunerExtendedMode = !tunerExtendedMode },
                         onDismiss = { showTunerSettings = false }
                     )
                 }
             }
+
+                // Tutorial Logic
+                LaunchedEffect(tunerOn) {
+                    if (tunerOn && tutorialState.step == TutorialStep.TUNER_BUTTON) {
+                        advanceTutorial(TutorialStep.TUNER_ACTIVE)
+                    }
+                }
+                
+                LaunchedEffect(showTunerSettings) {
+                    if (showTunerSettings && tutorialState.step == TutorialStep.TUNER_ACTIVE) {
+                        advanceTutorial(TutorialStep.TUNER_MENU)
+                    } else if (!showTunerSettings && tutorialState.step == TutorialStep.TUNER_MENU) {
+                         advanceTutorial(TutorialStep.CONCERT_MODE)
+                    }
+                }
+                
+                LaunchedEffect(concertModeOn) {
+                    if (concertModeOn && tutorialState.step == TutorialStep.CONCERT_MODE) {
+                        advanceTutorial(TutorialStep.EXIT_CONCERT)
+                    }
+                }
+
+                TutorialOverlay(
+                    state = tutorialState,
+                    onNext = {
+                        when (tutorialState.step) {
+                            TutorialStep.TOOLBOX -> advanceTutorial(TutorialStep.TUNER_BUTTON)
+                            TutorialStep.TUNER_BUTTON -> {
+                                advanceTutorial(TutorialStep.TUNER_ACTIVE)
+                                if (!tunerOn) ensureMicPermission { tunerOn = true }
+                            }
+                            TutorialStep.TUNER_ACTIVE -> {
+                                 advanceTutorial(TutorialStep.TUNER_MENU)
+                                 showTunerSettings = true
+                            }
+                            TutorialStep.TUNER_MENU -> {
+                                showTunerSettings = false
+                                advanceTutorial(TutorialStep.CONCERT_MODE)
+                            }
+                            TutorialStep.CONCERT_MODE -> {
+                                // En este paso el usuario debe pulsar el botón de concierto real.
+                                // El avance a EXIT_CONCERT se hace en LaunchedEffect(concertModeOn).
+                            }
+                            TutorialStep.EXIT_CONCERT -> {
+                                // El usuario debe pulsar el botón de casa (back) para salir del modo concierto.
+                            }
+                            TutorialStep.FINISHED -> {
+                                onTutorialComplete()
+                            }
+                            else -> {}
+                        }
+                    },
+                    onDismiss = onTutorialComplete
+                )
         }
     }
 }
