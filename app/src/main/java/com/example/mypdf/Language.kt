@@ -2,7 +2,9 @@ package com.example.mypdf
 
 enum class Language {
     EN,
-    ES
+    ES,
+    FR,
+    IT
 }
 
 fun Language.toIsEnglish(): Boolean = this == Language.EN

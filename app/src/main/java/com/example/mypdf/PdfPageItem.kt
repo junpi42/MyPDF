@@ -6,9 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,8 +38,9 @@ fun PdfPageItem(
     editMode: Boolean,
     annotations: PageAnnotations,
     selectedTool: String,
-    penColor: Color,
-    strokeWidth: Float,
+    currentColor: Color,
+    currentStrokeWidth: Float,
+    eraserRadiusNorm: Float,
     smoothingEnabled: Boolean,
     onPathAdded: (DrawingPath) -> Unit,
     onErase: (List<Offset>) -> Unit,
@@ -50,7 +49,8 @@ fun PdfPageItem(
     val currentPath = remember { mutableStateListOf<Offset>() }
     var canvasW by remember { mutableStateOf(0f) }
     var canvasH by remember { mutableStateOf(0f) }
-    var redrawTrigger by remember { mutableStateOf(0) }
+
+    var eraserCenter by remember { mutableStateOf<Offset?>(null) }
 
     fun toNorm(o: Offset): Offset =
         if (canvasW > 0f && canvasH > 0f) Offset(o.x / canvasW, o.y / canvasH) else Offset.Zero
@@ -66,8 +66,14 @@ fun PdfPageItem(
             for (i in 0 until smoothed.size - 1) {
                 val p0 = smoothed[i]
                 val p1 = smoothed[i + 1]
-                val q = Offset(0.75f * p0.x + 0.25f * p1.x, 0.75f * p0.y + 0.25f * p1.y)
-                val r = Offset(0.25f * p0.x + 0.75f * p1.x, 0.25f * p0.y + 0.75f * p1.y)
+                val q = Offset(
+                    0.75f * p0.x + 0.25f * p1.x,
+                    0.75f * p0.y + 0.25f * p1.y
+                )
+                val r = Offset(
+                    0.25f * p0.x + 0.75f * p1.x,
+                    0.25f * p0.y + 0.75f * p1.y
+                )
                 result.add(q); result.add(r)
             }
             result.add(smoothed.last())
@@ -82,16 +88,14 @@ fun PdfPageItem(
         var maxX = points[0].x
         var minY = points[0].y
         var maxY = points[0].y
-        for (i in 1 until points.size) {
+        for (i in points.indices) {
             val p = points[i]
             if (p.x < minX) minX = p.x
             if (p.x > maxX) maxX = p.x
             if (p.y < minY) minY = p.y
             if (p.y > maxY) maxY = p.y
         }
-        val width = maxX - minX
-        val height = maxY - minY
-        return width < 0.03f && height < 0.03f
+        return (maxX - minX) < 0.03f && (maxY - minY) < 0.03f
     }
 
     if (bitmap != null) {
@@ -106,58 +110,91 @@ fun PdfPageItem(
             shadowElevation = 4.dp,
             color = pageBg
         ) {
-            key(redrawTrigger) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                        .background(canvasBg)
-                        .onSizeChanged { newSize ->
-                            canvasW = newSize.width.toFloat()
-                            canvasH = newSize.height.toFloat()
-                        }
-                        .then(
-                            if (editMode && (selectedTool == "pen" || selectedTool == "eraser")) {
-                                Modifier.pointerInput(
-                                    selectedTool, smoothingEnabled, strokeWidth, canvasW, canvasH
-                                ) {
-                                    awaitEachGesture {
-                                        if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
-                                        currentPath.clear()
+            // Removed key(redrawTrigger) to prevent full Canvas recreation on every drag event
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                    .background(canvasBg)
+                    .onSizeChanged { newSize ->
+                        canvasW = newSize.width.toFloat()
+                        canvasH = newSize.height.toFloat()
+                    }
+                    .then(
+                        if (editMode && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
+                            Modifier.pointerInput(
+                                selectedTool,
+                                smoothingEnabled,
+                                currentStrokeWidth,
+                                currentColor,
+                                canvasW,
+                                canvasH
+                            ) {
 
-                                        val down = awaitFirstDown()
-                                        currentPath.add(toNorm(down.position))
+                                awaitEachGesture {
+                                    if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
+                                    currentPath.clear()
 
-                                        drag(down.id) { change ->
-                                            change.consume()
+                                    val down = awaitFirstDown()
+                                    var lastNorm = toNorm(down.position)
 
-                                            currentPath.add(toNorm(change.position))
+                                    currentPath.add(lastNorm)
+
+                                    if (selectedTool == "eraser") {
+                                        eraserCenter = lastNorm
+                                    }
+
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id }
+                                            ?: break
+
+                                        if (!change.pressed) break
+
+                                        if (change.position != change.previousPosition) {
+                                            val newNorm = toNorm(change.position)
+                                            currentPath.add(newNorm)
 
                                             if (selectedTool == "eraser") {
-                                                onErase(currentPath.toList())
-                                                redrawTrigger++
+                                                eraserCenter = newNorm
+                                                onErase(listOf(lastNorm, newNorm))
                                             }
-                                        }
 
-                                        if (currentPath.isNotEmpty()) {
+                                            lastNorm = newNorm
+                                            change.consume()
+                                        }
+                                    }
+
+                                    if (currentPath.isNotEmpty()) {
                                             val basePoints = currentPath.toList()
                                             val tiny = isTinyStroke(basePoints)
-                                            val final =
-                                                if (smoothingEnabled && selectedTool == "pen" && !tiny && basePoints.size > 1) {
-                                                    smoothPath(basePoints, iterations = 1)
-                                                } else basePoints
+
+                                            val final = if (
+                                                smoothingEnabled &&
+                                                (selectedTool == "marker" || selectedTool == "highlighter") &&
+                                                !tiny &&
+                                                basePoints.size > 1
+                                            ) {
+                                                smoothPath(basePoints, 1)
+                                            } else basePoints
 
                                             if (selectedTool == "eraser") {
+                                                eraserCenter = final.lastOrNull()
                                                 onErase(final)
                                             } else {
                                                 onPathAdded(
                                                     DrawingPath(
-                                                        final, penColor, strokeWidth, isEraser = false
+                                                        final,
+                                                        currentColor,
+                                                        currentStrokeWidth,
+                                                        isEraser = false
                                                     )
                                                 )
                                             }
                                         }
+
                                         currentPath.clear()
+                                        eraserCenter = null
                                     }
                                 }
                             } else Modifier
@@ -165,38 +202,42 @@ fun PdfPageItem(
                 ) {
                     drawImage(
                         bitmap.asImageBitmap(),
-                        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                        dstSize = IntSize(
+                            size.width.roundToInt(),
+                            size.height.roundToInt()
+                        )
                     )
 
+                    // Dibujar anotaciones previas
                     annotations.paths.forEach { p ->
-                        when {
-                            p.points.size > 1 -> {
-                                val path = Path().apply {
-                                    val first = toPx(p.points.first())
-                                    moveTo(first.x, first.y)
-                                    p.points.drop(1).forEach { pt ->
-                                        val pp = toPx(pt)
-                                        lineTo(pp.x, pp.y)
-                                    }
+                        if (p.points.size > 1) {
+                            val path = Path().apply {
+                                val first = toPx(p.points.first())
+                                moveTo(first.x, first.y)
+                                p.points.drop(1).forEach { pt ->
+                                    val pp = toPx(pt)
+                                    lineTo(pp.x, pp.y)
                                 }
-                                drawPath(
-                                    path = path,
-                                    color = p.color,
-                                    style = Stroke(width = p.strokeWidth * size.width)
-                                )
                             }
-                            p.points.size == 1 -> {
-                                val pp = toPx(p.points.first())
-                                drawCircle(
-                                    color = p.color,
-                                    radius = (p.strokeWidth * size.width) / 2f,
-                                    center = pp
-                                )
-                            }
+                            drawPath(
+                                path = path,
+                                color = p.color,
+                                style = Stroke(width = p.strokeWidth * size.width)
+                            )
+                        } else if (p.points.size == 1) {
+                            val pp = toPx(p.points.first())
+                            drawCircle(
+                                color = p.color,
+                                radius = (p.strokeWidth * size.width) / 2f,
+                                center = pp
+                            )
                         }
                     }
 
-                    if (selectedTool == "pen" && currentPath.isNotEmpty()) {
+                    // Dibujar trazo actual
+                    if ((selectedTool == "marker" || selectedTool == "highlighter") && currentPath.isNotEmpty()) {
+                        val drawColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
+                        
                         if (currentPath.size > 1) {
                             val path = Path().apply {
                                 val first = toPx(currentPath.first())
@@ -208,21 +249,39 @@ fun PdfPageItem(
                             }
                             drawPath(
                                 path = path,
-                                color = penColor,
-                                style = Stroke(width = strokeWidth * size.width)
+                                color = drawColor,
+                                style = Stroke(
+                                    width = currentStrokeWidth * size.width,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    join = androidx.compose.ui.graphics.StrokeJoin.Round
+                                )
                             )
                         } else {
                             val pp = toPx(currentPath.first())
                             drawCircle(
-                                color = penColor,
-                                radius = (strokeWidth * size.width) / 2f,
+                                color = drawColor,
+                                radius = (currentStrokeWidth * size.width) / 2f,
                                 center = pp
+                            )
+                        }
+                    }
+
+                    // Dibujar círculo del borrador
+                    if (selectedTool == "eraser") {
+                        eraserCenter?.let { centerNorm ->
+                            val centerPx = toPx(centerNorm)
+                            val radiusPx = eraserRadiusNorm * size.width
+
+                            drawCircle(
+                                color = Color.Red.copy(alpha = 0.5f),
+                                radius = radiusPx,
+                                center = centerPx,
+                                style = Stroke(width = 4f)
                             )
                         }
                     }
                 }
             }
-        }
     } else {
         Box(
             Modifier

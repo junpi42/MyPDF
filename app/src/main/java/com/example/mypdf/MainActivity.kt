@@ -24,8 +24,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,6 +85,7 @@ class MainActivity : ComponentActivity() {
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
             var gridScale by remember { mutableStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
+            var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
 
             // Helper to save settings
             fun save() {
@@ -91,7 +95,8 @@ class MainActivity : ComponentActivity() {
                         language = if (language == Language.ES) "ES" else "EN",
                         isDarkMode = darkMode,
                         isDaltonic = isDaltonic,
-                        gridScale = gridScale
+                        gridScale = gridScale,
+                        tutorialCompleted = tutorialCompleted
                     )
                 )
             }
@@ -118,13 +123,18 @@ class MainActivity : ComponentActivity() {
                             AppRoot(
                                 isDarkMode = darkMode,
                                 onToggleDarkMode = { darkMode = !darkMode; save() },
+                                isDaltonic = isDaltonic,
+                                onToggleDaltonic = { isDaltonic = !isDaltonic; save() },
                                 language = language,
-                                onToggleLanguage = { 
-                                    language = if (language == Language.EN) Language.ES else Language.EN
+                                onLanguageChange = { 
+                                    language = it
                                     save() 
                                 },
                                 gridScale = gridScale,
-                                onGridScaleChange = { gridScale = it; save() }
+                                onGridScaleChange = { gridScale = it; save() },
+                                tutorialCompleted = tutorialCompleted,
+                                onTutorialComplete = { tutorialCompleted = true; save() },
+                                onResetTutorial = { tutorialCompleted = false; save() }
                             )
                         }
                     }
@@ -138,13 +148,27 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot(
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language,
-    onToggleLanguage: () -> Unit,
+    onLanguageChange: (Language) -> Unit,
     gridScale: Float,
-    onGridScaleChange: (Float) -> Unit
+    onGridScaleChange: (Float) -> Unit,
+    tutorialCompleted: Boolean,
+    onTutorialComplete: () -> Unit,
+    onResetTutorial: () -> Unit
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
+
+    // Hoisted Tutorial State
+    var tutorialState by remember { mutableStateOf(TutorialState(step = if (!tutorialCompleted) TutorialStep.INTRO_DIALOG else TutorialStep.NONE)) }
+
+    LaunchedEffect(tutorialCompleted) {
+        if (tutorialCompleted) {
+            tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -156,17 +180,35 @@ private fun AppRoot(
                     onOpen = { selectedPath = it.absolutePath },
                     isDarkMode = isDarkMode,
                     onToggleDarkMode = onToggleDarkMode,
+                    isDaltonic = isDaltonic,
+                    onToggleDaltonic = onToggleDaltonic,
                     language = language,
-                    onToggleLanguage = onToggleLanguage,
+                    onLanguageChange = onLanguageChange,
                     gridScale = gridScale,
-                    onGridScaleChange = onGridScaleChange
+                    onGridScaleChange = onGridScaleChange,
+                    tutorialCompleted = tutorialCompleted,
+                    onTutorialComplete = {
+                        onTutorialComplete()
+                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+                    },
+                    onResetTutorial = onResetTutorial,
+                    tutorialState = tutorialState,
+                    onTutorialStateChange = { tutorialState = it }
                 )
             } else {
                 PdfEditScreen(
                     file = selectedFile,
                     onBack = { selectedPath = null },
                     isDarkMode = isDarkMode,
-                    language = language
+                    isDaltonic = isDaltonic,
+                    onToggleDaltonic = onToggleDaltonic,
+                    language = language,
+                    tutorialState = tutorialState,
+                    onTutorialStateChange = { tutorialState = it },
+                    onTutorialComplete = {
+                        onTutorialComplete()
+                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+                    }
                 )
             }
         }
@@ -179,15 +221,61 @@ fun LibraryScreen(
     onOpen: (File) -> Unit,
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
+    isDaltonic: Boolean,
+    onToggleDaltonic: () -> Unit,
     language: Language,
-    onToggleLanguage: () -> Unit,
+    onLanguageChange: (Language) -> Unit,
     gridScale: Float,
-    onGridScaleChange: (Float) -> Unit
+    onGridScaleChange: (Float) -> Unit,
+    tutorialCompleted: Boolean,
+    onTutorialComplete: () -> Unit,
+    onResetTutorial: () -> Unit,
+    tutorialState: TutorialState,
+    onTutorialStateChange: (TutorialState) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val s = strings()
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    // Tutorial targets local state
+    data class TutorialTargets(
+        val newCategory: Rect? = null,
+        val fab: Rect? = null,
+        val importedCard: Rect? = null
+    )
+    var tutorialTargets by remember { mutableStateOf(TutorialTargets()) }
+
+    fun resolveTarget(step: TutorialStep): Rect? = when (step) {
+        TutorialStep.NEW_CATEGORY -> tutorialTargets.newCategory
+        TutorialStep.FAB, TutorialStep.IMPORT_PDF_MENU -> tutorialTargets.fab
+        TutorialStep.LONG_PRESS_FILE,
+        TutorialStep.OPTIONS_MENU,
+        TutorialStep.RENAME_DIALOG,
+        TutorialStep.OPEN_FILE -> tutorialTargets.importedCard
+        else -> null
+    }
+
+    fun advanceTutorial(next: TutorialStep) {
+        onTutorialStateChange(tutorialState.copy(step = next, targetRect = resolveTarget(next)))
+    }
+
+    LaunchedEffect(tutorialTargets, tutorialState.step) {
+        val resolved = resolveTarget(tutorialState.step)
+        if (resolved != tutorialState.targetRect) {
+            onTutorialStateChange(tutorialState.copy(targetRect = resolved))
+        }
+    }
+
+    LaunchedEffect(tutorialCompleted) {
+        if (tutorialCompleted) {
+            onTutorialStateChange(tutorialState.copy(step = TutorialStep.NONE, targetRect = null))
+        }
+    }
+
+    val tutorialsEnabled = tutorialState.step != TutorialStep.NONE
+
+    // State variables
     var categories by remember { mutableStateOf(listOf<File>()) }
     var selectedCategory by rememberSaveable { mutableStateOf<File?>(null) }
     var folders by remember { mutableStateOf(listOf<File>()) }
@@ -216,6 +304,26 @@ fun LibraryScreen(
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
+
+    fun notifyTutorialHint(message: String) {
+        scope.launch { snackbarHostState.showSnackbar(message) }
+    }
+
+    // Ensure targetRect is updated when step changes (if rect is already captured)
+    LaunchedEffect(tutorialState.step) {
+        val target = when (tutorialState.step) {
+            TutorialStep.NEW_CATEGORY -> tutorialTargets.newCategory
+            TutorialStep.FAB -> tutorialTargets.fab
+            TutorialStep.LONG_PRESS_FILE -> tutorialTargets.importedCard
+            TutorialStep.OPTIONS_MENU -> tutorialTargets.importedCard
+            TutorialStep.RENAME_DIALOG -> tutorialTargets.importedCard
+            TutorialStep.OPEN_FILE -> tutorialTargets.importedCard
+            else -> null
+        }
+        if (target != null) {
+            onTutorialStateChange(tutorialState.copy(targetRect = target))
+        }
+    }
 
     val configuration = LocalConfiguration.current
     val screenWidthDp = configuration.screenWidthDp
@@ -398,18 +506,38 @@ fun LibraryScreen(
                     item {
                         Spacer(Modifier.height(8.dp))
                         if (isCompactSidebar) {
-                            IconButton(onClick = { showNewCategoryDialog = true }) {
-                                Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = s.newCategory)
+                            IconButton(
+                                onClick = {
+                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
+                                        advanceTutorial(TutorialStep.FAB)
+                                    }
+                                    showNewCategoryDialog = true
+                                },
+                                modifier = Modifier.onGloballyPositioned {
+                                    tutorialTargets = tutorialTargets.copy(newCategory = it.boundsInRoot())
+                                }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = s.newCategory)
                             }
                         } else {
                             TextButton(
-                                onClick = { showNewCategoryDialog = true },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                onClick = {
+                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
+                                        advanceTutorial(TutorialStep.FAB)
+                                    }
+                                    showNewCategoryDialog = true
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp)
+                                    .onGloballyPositioned {
+                                        tutorialTargets = tutorialTargets.copy(newCategory = it.boundsInRoot())
+                                    },
                                 colors = ButtonDefaults.textButtonColors(
                                     contentColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
-                                Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text(s.newCategory)
                             }
@@ -424,7 +552,8 @@ fun LibraryScreen(
                     IconButton(onClick = { showSettingsDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = s.themes // Reuse or add new string
+                            contentDescription = s.themes,
+                            modifier = Modifier.size(32.dp)
                         )
                     }
                 } else {
@@ -433,9 +562,9 @@ fun LibraryScreen(
                         modifier = Modifier.fillMaxWidth().padding(8.dp),
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(s.settingsTitle, style = MaterialTheme.typography.bodyMedium)
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(s.settingsTitle, style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -446,26 +575,66 @@ fun LibraryScreen(
             modifier = Modifier.weight(1f),
             floatingActionButton = {
                 FloatingActionButton(
-                    onClick = { fabMenuExpanded = true },
+                    onClick = {
+                        if (tutorialState.step == TutorialStep.FAB) {
+                            advanceTutorial(TutorialStep.IMPORT_PDF_MENU)
+                        }
+                        fabMenuExpanded = true
+                    },
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.onGloballyPositioned {
+                        tutorialTargets = tutorialTargets.copy(fab = it.boundsInRoot())
+                    }
                 ) {
-                    Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = null)
+                    Icon(Icons.Default.Add, contentDescription = null)
+
+                    // Custom Menu for Tutorial or Standard Dropdown
+                    if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                        // We can't easily highlight inside the standard DropdownMenu because it's a Popup.
+                        // We will use a custom Box that looks like the menu for the tutorial step.
+                        // Or we just let the standard menu open and try to guide the user.
+                        // But the user requested "highlight the button to add pdf".
+                        // Let's use the standard menu but maybe we can't block clicks on "Create Folder".
+                        // To strictly follow "only can click add pdf", we should probably NOT show the real menu
+                        // and show a fake menu in the overlay.
+                        // But for simplicity, let's use the real menu and hope for the best regarding "blocking".
+                        // Actually, if we are in tutorial mode, we can render a custom Column here instead of DropdownMenu?
+                        // No, DropdownMenu is a Popup.
+                        
+                        // Let's just use DropdownMenu and hope for the best regarding "blocking".
+                        // To highlight it, we need its position. It usually appears near the FAB.
+                    }
+                    
                     DropdownMenu(
                         expanded = fabMenuExpanded,
-                        onDismissRequest = { fabMenuExpanded = false }
+                        onDismissRequest = {
+                            if (tutorialState.step != TutorialStep.IMPORT_PDF_MENU) {
+                                fabMenuExpanded = false
+                            }
+                        }
                     ) {
                         DropdownMenuItem(
                             text = { Text(s.importPdf) },
-                            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.UploadFile, null) },
+                            leadingIcon = { Icon(Icons.Default.UploadFile, null) },
+                            modifier = if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                                Modifier.background(MaterialTheme.colorScheme.primaryContainer)
+                            } else Modifier,
                             onClick = {
                                 fabMenuExpanded = false
                                 picker.launch(arrayOf("application/pdf"))
+                                if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                                    advanceTutorial(TutorialStep.LONG_PRESS_FILE)
+                                }
                             }
                         )
+                        
+                        // Siempre mostramos también "Crear carpeta" durante el tutorial, pero sin afectar al flujo
+                        val createFolderEnabled = tutorialState.step != TutorialStep.IMPORT_PDF_MENU
                         DropdownMenuItem(
                             text = { Text(s.createFolder) },
-                            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.CreateNewFolder, null) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            enabled = createFolderEnabled,
                             onClick = {
                                 fabMenuExpanded = false
                                 showNewFolderDialog = true
@@ -581,17 +750,42 @@ fun LibraryScreen(
                                 items(showFiles.size) { i ->
                                     val f = showFiles[i]
                                     val bmp = thumbs[f]
+                                    // Check if this is the file to highlight (e.g. the most recent one or just the first one)
+                                    // For tutorial, we assume the user just imported a file, so it should be at the top if sorted by date.
+                                    // Or we can just highlight the first file.
+                                    val isTarget = tutorialsEnabled && i == 0
+                                    val modifierWithTarget = if (isTarget) Modifier.onGloballyPositioned {
+                                        tutorialTargets = tutorialTargets.copy(importedCard = it.boundsInRoot())
+                                    } else Modifier
                                     PdfCard(
                                         name = f.nameWithoutExtension,
                                         sizeText = formatBytes(f.length()),
                                         dateText = formatRelativeDate(f.lastModified()),
                                         thumbnail = bmp,
-                                        onClick = { onOpen(f) },
+                                        modifier = modifierWithTarget,
+                                        onClick = {
+                                            when (tutorialState.step) {
+                                                TutorialStep.OPEN_FILE -> {
+                                                    onTutorialStateChange(tutorialState.copy(step = TutorialStep.TOOLBOX))
+                                                    onOpen(f)
+                                                }
+                                                TutorialStep.NONE -> onOpen(f)
+                                                else -> notifyTutorialHint(s.tutorialLongPressBody)
+                                            }
+                                        },
                                         onLongClick = {
-                                            fileToEdit = f
-                                            isDirTarget = false
-                                            renameText = f.nameWithoutExtension
-                                            showFileOptionsDialog = true
+                                            if (tutorialState.step == TutorialStep.LONG_PRESS_FILE && isTarget) {
+                                                advanceTutorial(TutorialStep.OPTIONS_MENU)
+                                                fileToEdit = f
+                                                isDirTarget = false
+                                                renameText = f.nameWithoutExtension
+                                                showFileOptionsDialog = true
+                                            } else if (tutorialState.step == TutorialStep.NONE) {
+                                                fileToEdit = f
+                                                isDirTarget = false
+                                                renameText = f.nameWithoutExtension
+                                                showFileOptionsDialog = true
+                                            }
                                         }
                                     )
                                 }
@@ -662,33 +856,55 @@ fun LibraryScreen(
 
     if (showFileOptionsDialog && fileToEdit != null) {
         AlertDialog(
-            onDismissRequest = { showFileOptionsDialog = false },
+            onDismissRequest = { 
+                if (tutorialState.step == TutorialStep.NONE) showFileOptionsDialog = false 
+            },
             title = { Text(if (isDirTarget) fileToEdit?.name ?: "" else fileToEdit?.nameWithoutExtension ?: "") },
             text = {
                 Column {
+                    // Renombrar (opción resaltada por el tutorial)
+                    val isRenameTarget = tutorialState.step == TutorialStep.OPTIONS_MENU
                     TextButton(
                         onClick = {
                             showFileOptionsDialog = false
                             showRenameDialog = true
+                            if (tutorialState.step == TutorialStep.OPTIONS_MENU) advanceTutorial(TutorialStep.RENAME_DIALOG)
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (isRenameTarget) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier
+                        )
                     ) {
-                        Text(s.rename, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                        Text(
+                            s.rename,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                        )
                     }
+
+                    // Eliminar (siempre visible, pero no cambia el paso del tutorial)
+                    val deleteEnabled = tutorialState.step != TutorialStep.OPTIONS_MENU
                     TextButton(
                         onClick = {
                             showFileOptionsDialog = false
                             showDeleteDialog = true
                         },
+                        enabled = deleteEnabled,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(s.delete, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                        Text(
+                            s.delete,
+                            color = if (deleteEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                        )
                     }
                 }
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showFileOptionsDialog = false }) { Text(s.cancel) }
+                TextButton(onClick = { 
+                    if (tutorialState.step == TutorialStep.NONE) showFileOptionsDialog = false 
+                }) { Text(s.cancel) }
             }
         )
     }
@@ -699,23 +915,35 @@ fun LibraryScreen(
             label = s.rename,
             value = renameText,
             onValueChange = { renameText = it },
-            onDismiss = { showRenameDialog = false },
+            onDismiss = {
+                if (tutorialState.step == TutorialStep.NONE) showRenameDialog = false
+            },
             onConfirm = {
                 if (renameText.isNotBlank()) {
                     scope.launch {
                         val success = withContext(Dispatchers.IO) {
                             val target = fileToEdit!!
-                            val newFile = File(target.parentFile, if (target.isDirectory) renameText else "$renameText.pdf")
-                            if (!newFile.exists()) target.renameTo(newFile) else false
+                            val desiredName = if (target.isDirectory) renameText else "$renameText.pdf"
+                            if (desiredName == target.name) {
+                                false
+                            } else {
+                                val newFile = File(target.parentFile, desiredName)
+                                !newFile.exists() && target.renameTo(newFile)
+                            }
                         }
                         if (success) {
-                            refreshCategories()
-                            loadCategory(selectedCategory)
+                            if (isDirTarget) refreshCategories() else loadCategory(selectedCategory)
+                            if (tutorialState.step == TutorialStep.RENAME_DIALOG) advanceTutorial(TutorialStep.OPEN_FILE)
+                            showRenameDialog = false
                         } else {
                             Toast.makeText(context, s.cannotRename, Toast.LENGTH_SHORT).show()
+                            if (tutorialState.step == TutorialStep.RENAME_DIALOG) {
+                                notifyTutorialHint(s.tutorialRenameBody)
+                            }
                         }
-                        showRenameDialog = false
                     }
+                } else {
+                    notifyTutorialHint(s.tutorialRenameBody)
                 }
             },
             confirmText = s.save,
@@ -752,17 +980,38 @@ fun LibraryScreen(
         )
     }
 
+    // Settings Dialog (restored)
     if (showSettingsDialog) {
         SettingsDialog(
             isDarkMode = isDarkMode,
             onToggleDarkMode = onToggleDarkMode,
+            isDaltonic = isDaltonic,
+            onToggleDaltonic = onToggleDaltonic,
             language = language,
-            onToggleLanguage = onToggleLanguage,
+            onLanguageChange = onLanguageChange,
             gridScale = gridScale,
             onGridScaleChange = onGridScaleChange,
+            onResetTutorial = {
+                onResetTutorial()
+                onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
+                showSettingsDialog = false
+            },
             onDismiss = { showSettingsDialog = false }
         )
     }
+
+    // Tutorial Overlay
+    TutorialOverlay(
+        state = tutorialState,
+        onNext = {
+            if (tutorialState.step == TutorialStep.INTRO_DIALOG) {
+                advanceTutorial(TutorialStep.NEW_CATEGORY)
+            }
+        },
+        onDismiss = onTutorialComplete
+    )
+
+    SnackbarHost(hostState = snackbarHostState)
 }
 
 // ====== UI Components ======
@@ -839,11 +1088,12 @@ private fun PdfCard(
     sizeText: String,
     dateText: String,
     thumbnail: Bitmap?,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         elevation = androidx.compose.material3.CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)

@@ -1,28 +1,34 @@
 package com.example.mypdf
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BorderColor
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.HorizontalRule
-import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
@@ -32,34 +38,39 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun StyledLeftToolBar(
     selectedTool: String,
-    penColor: Color,
+    paletteColors: List<Color>,
+    selectedPaletteIndex: Int,
     strokeWidth: Float,
-    smoothingEnabled: Boolean,
+    smoothingEnabled: Boolean, // mantenido para compatibilidad aunque no se use aún visualmente
     onSelectTool: (String) -> Unit,
-    onColorClick: () -> Unit,
-    onColorChanged: (Color) -> Unit, // New callback
+    onPaletteSlotClicked: (Int) -> Unit,
     onStrokeChange: (Float) -> Unit,
-    onToggleSmoothing: () -> Unit,
-    onUndo: () -> Unit,
-    darkMode: Boolean,
-    language: Language,
+    onToggleSmoothing: () -> Unit, // idem
+    darkMode: Boolean, // idem
+    language: Language, // idem
+    onToolboxPositioned: (Rect) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val isTablet = config.screenWidthDp > 600
     
-    val toolbarWidth = if (isTablet) 100.dp else 80.dp
-    val buttonSize = if (isTablet) 64.dp else 56.dp
-    val iconSize = if (isTablet) 32.dp else 24.dp
-    val colorSize = if (isTablet) 56.dp else 48.dp
+    // Toolbar un pelín más estrecha
+    val toolbarWidth = if (isTablet) 88.dp else 72.dp
+    val buttonSize = if (isTablet) 52.dp else 44.dp
+    val iconSize = if (isTablet) 34.dp else 28.dp
+    val colorSize = if (isTablet) 44.dp else 36.dp
 
     Surface(
-        modifier = modifier.width(toolbarWidth).padding(start = 12.dp, top = 12.dp, bottom = 12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 2.dp,
-        shadowElevation = 4.dp,
-        shape = MaterialTheme.shapes.large
+        modifier = modifier
+            .width(toolbarWidth)
+            .onGloballyPositioned { coordinates ->
+                onToolboxPositioned(coordinates.boundsInRoot())
+            },
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 4.dp,
+        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
     ) {
         Column(
             modifier = Modifier
@@ -79,10 +90,19 @@ fun StyledLeftToolBar(
             )
 
             StyledToolButton(
-                icon = Icons.Default.Edit,
-                label = s.toolPen,
-                selected = selectedTool == "pen",
-                onClick = { onSelectTool("pen") },
+                icon = Icons.Default.Create,
+                label = "Marker", // TODO: Add to strings
+                selected = selectedTool == "marker",
+                onClick = { onSelectTool("marker") },
+                size = buttonSize,
+                iconSize = iconSize
+            )
+            
+            StyledToolButton(
+                icon = Icons.Default.BorderColor,
+                label = "Highlighter", // TODO: Add to strings
+                selected = selectedTool == "highlighter",
+                onClick = { onSelectTool("highlighter") },
                 size = buttonSize,
                 iconSize = iconSize
             )
@@ -99,101 +119,123 @@ fun StyledLeftToolBar(
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(
                 modifier = Modifier.width(40.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
             Spacer(Modifier.height(8.dp))
 
-            // --- Properties Group ---
-            // 3-Color Palette
-            val colors = listOf(Color.Red, Color.Blue, Color.Black)
+            // --- Colors Group (3 Slots) ---
             Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                colors.forEach { color ->
-                    val isSelected = penColor == color
+                paletteColors.forEachIndexed { index, color ->
+                    val isSelected = selectedPaletteIndex == index
                     Box(
                         modifier = Modifier
-                            .size(if (isSelected) colorSize + 4.dp else colorSize)
+                            .size(if (isSelected) colorSize + 8.dp else colorSize)
                             .clip(CircleShape)
                             .background(color)
                             .border(
                                 width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                                 shape = CircleShape
                             )
-                            .combinedClickable(
-                                onClick = { onColorChanged(color) },
-                                onLongClick = { onColorClick() }
-                            )
+                            .clickable { onPaletteSlotClicked(index) }
                     )
                 }
             }
 
             Spacer(Modifier.height(8.dp))
-
-            // Stroke Width
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                StyledToolButton(
-                    icon = Icons.Default.Remove,
-                    label = s.toolThin,
-                    selected = strokeWidth < 0.005f,
-                    onClick = { onStrokeChange(0.003f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
-                StyledToolButton(
-                    icon = Icons.Default.HorizontalRule,
-                    label = s.toolMedium,
-                    selected = strokeWidth in 0.005f..0.008f,
-                    onClick = { onStrokeChange(0.006f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
-                StyledToolButton(
-                    icon = Icons.Default.DragHandle,
-                    label = s.toolThick,
-                    selected = strokeWidth > 0.008f,
-                    onClick = { onStrokeChange(0.01f) },
-                    compact = true,
-                    size = if (isTablet) 48.dp else 36.dp,
-                    iconSize = if (isTablet) 24.dp else 20.dp
-                )
-            }
-
-            Spacer(Modifier.height(8.dp))
             HorizontalDivider(
                 modifier = Modifier.width(40.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
             Spacer(Modifier.height(8.dp))
 
-            // --- Actions Group ---
-            StyledToolButton(
-                icon = Icons.Default.Tune,
-                label = s.toolSmooth,
-                selected = smoothingEnabled,
-                onClick = onToggleSmoothing,
-                size = buttonSize,
-                iconSize = iconSize
-            )
+            // --- Preview ---
+            if (selectedTool == "marker" || selectedTool == "highlighter") {
+                Box(
+                    modifier = Modifier
+                        .size(height = 120.dp, width = 48.dp)
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val currentColor = paletteColors.getOrNull(selectedPaletteIndex) ?: Color.Black
+                    val previewColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
 
-            Spacer(modifier = Modifier.weight(1f))
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val path = Path().apply {
+                            // Start from top center
+                            moveTo(size.width * 0.5f, 0f)
+                            // Curve 1
+                            quadraticBezierTo(
+                                size.width, size.height * 0.25f,
+                                size.width * 0.5f, size.height * 0.5f
+                            )
+                            // Curve 2
+                            quadraticBezierTo(
+                                0f, size.height * 0.75f,
+                                size.width * 0.5f, size.height
+                            )
+                        }
+                        drawPath(
+                            path = path,
+                            color = previewColor,
+                            style = Stroke(
+                                width = strokeWidth * 1000f,
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
+                    }
+                }
+            }
 
-            FilledIconButton(
-                onClick = onUndo,
-                modifier = Modifier.size(buttonSize),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = s.toolUndo, modifier = Modifier.size(iconSize))
+            // --- Slider Group ---
+            if (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter") {
+                val (minVal, maxVal) = when (selectedTool) {
+                    "marker" -> 0.003f to 0.02f
+                    "highlighter" -> 0.01f to 0.08f
+                    else -> 0.015f to 0.1f
+                }
+
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    val sliderLength = maxHeight - 16.dp
+                    val safeLength = if (sliderLength > 50.dp) sliderLength else 50.dp
+
+                    Slider(
+                        value = strokeWidth,
+                        onValueChange = onStrokeChange,
+                        valueRange = minVal..maxVal,
+                        modifier = Modifier
+                            .graphicsLayer { rotationZ = 270f }
+                            .layout { measurable, constraints ->
+                                val placeable = measurable.measure(
+                                    constraints.copy(
+                                        minWidth = constraints.minHeight,
+                                        maxWidth = constraints.maxHeight,
+                                        minHeight = constraints.minWidth,
+                                        maxHeight = constraints.maxWidth
+                                    )
+                                )
+                                layout(placeable.height, placeable.width) {
+                                    placeable.place(
+                                        -(placeable.width - placeable.height) / 2,
+                                        -(placeable.height - placeable.width) / 2
+                                    )
+                                }
+                            }
+                            .width(safeLength)
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
             }
         }
     }
@@ -243,4 +285,3 @@ fun StyledToolButton(
         }
     }
 }
-
