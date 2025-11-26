@@ -13,7 +13,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -55,16 +54,10 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import kotlin.math.min
-
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.draw.clip
-
 import com.example.mypdf.eyecontrol.EyeControlButton
 import com.example.mypdf.eyecontrol.EyeControlHelpCard
 import com.example.mypdf.eyecontrol.WinkState
-import com.example.mypdf.eyecontrol.hasCameraPermission
 import com.example.mypdf.eyecontrol.rememberEyeControlState
 import com.example.mypdf.eyecontrol.EyeCalibrationDialog
 import com.example.mypdf.eyecontrol.EyeCalibrationManager
@@ -273,7 +266,7 @@ fun PdfViewerScreen(
     LaunchedEffect(pageCount, screenWidthPx) {
         if (pageCount <= 0 || screenWidthPx <= 0) return@LaunchedEffect
         val effectiveWidth = min(screenWidthPx, maxTargetWidthPx)
-        val quickW = min(effectiveWidth, 600)
+        val quickW = min(3, pageCount)
         val boot = min(3, pageCount)
         val sem = Semaphore(1)
         coroutineScope {
@@ -323,10 +316,13 @@ fun PdfViewerScreen(
 
     // ===== anotaciones =====
     val annotations = remember { mutableMapOf<Int, PageAnnotations>() }
+    // Archivo de anotaciones asociado al PDF
     val annFile = remember(file.path) {
         File(file.parentFile, file.nameWithoutExtension + ".ann.json")
     }
     var saveJob by remember { mutableStateOf<Job?>(null) }
+    // Stack de undo: hasta 5 snapshots
+    val undoStack = remember { mutableStateListOf<Map<Int, PageAnnotations>>() }
 
     val scheduleSave: () -> Unit = {
         saveJob?.cancel()
@@ -338,9 +334,7 @@ fun PdfViewerScreen(
                     val jPaths = JSONArray()
                     page.paths.forEach { p ->
                         val pts = JSONArray().also { arr ->
-                            p.points.forEach { o ->
-                                arr.put(JSONArray().put(o.x).put(o.y))
-                            }
+                            p.points.forEach { o -> arr.put(JSONArray().put(o.x).put(o.y)) }
                         }
                         jPaths.put(
                             JSONObject()
@@ -354,13 +348,43 @@ fun PdfViewerScreen(
                 }
                 val root = JSONObject().put("version", 1).put("pages", pages)
                 val tmp = File(annFile.parentFile, annFile.name + ".tmp")
-                FileOutputStream(tmp).use {
-                    it.write(root.toString().toByteArray(Charsets.UTF_8))
-                }
+                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
                 if (annFile.exists()) annFile.delete()
                 tmp.renameTo(annFile)
             }
         }
+    }
+
+    fun snapshotAnnotations(): Map<Int, PageAnnotations> {
+        val copy = mutableMapOf<Int, PageAnnotations>()
+        annotations.forEach { (idx, page) ->
+            val pathsCopy = page.paths.map { p -> DrawingPath(p.points.toList(), p.color, p.strokeWidth, p.isEraser) }.toMutableList()
+            copy[idx] = PageAnnotations(page.pageIndex, pathsCopy)
+        }
+        return copy
+    }
+
+    fun pushUndo() {
+        // Guardamos snapshot previo
+        val snap = snapshotAnnotations()
+        // Evitar duplicados consecutivos
+        if (undoStack.isNotEmpty() && undoStack.last() == snap) return
+        undoStack.add(snap)
+        // Mantener máximo 5
+        while (undoStack.size > 5) undoStack.removeAt(0)
+    }
+
+    fun undo(): Boolean {
+        if (undoStack.isEmpty()) return false
+        val last = undoStack.removeAt(undoStack.size - 1)
+        // Restaurar
+        annotations.clear()
+        last.forEach { (idx, page) ->
+            val pathsCopy = page.paths.map { p -> DrawingPath(p.points.toList(), p.color, p.strokeWidth, p.isEraser) }.toMutableList()
+            annotations[idx] = PageAnnotations(page.pageIndex, pathsCopy)
+        }
+        scheduleSave()
+        return true
     }
 
     // cargar anotaciones
@@ -412,6 +436,51 @@ fun PdfViewerScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            // Lambdas locales necesarias para la top bar (están en el scope de PdfViewerScreen)
+            val onTunerClickLocal: () -> Unit = {
+                if (!tunerOn) {
+                    ensureMicPermission { tunerOn = true }
+                } else {
+                    tunerOn = false
+                }
+            }
+
+            val onConcertClickLocal: () -> Unit = { concertModeOn = !concertModeOn }
+
+            val onUpdateTutorialTargetLocal: ((ViewerTutorialTargets) -> ViewerTutorialTargets) -> Unit = { transform ->
+                tutorialTargets = transform(tutorialTargets)
+            }
+
+            // Top bar para tablets (muestra botón Undo que usa undo() definido en este scope)
+            if (deviceType != DeviceType.PHONE) {
+                StyledTopBar(
+                    onBack = onBack,
+                    tunerOn = tunerOn,
+                    concertModeOn = concertModeOn,
+                    highlightBack = false,
+                    onTunerClick = onTunerClickLocal,
+                    onConcertClick = onConcertClickLocal,
+                    showUndo = LocalConfiguration.current.screenWidthDp >= 600,
+                    onUndo = { undo() },
+                    darkMode = darkMode,
+                    onTunerPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(tunerButton = rect) } },
+                    onConcertPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(concertButton = rect) } },
+                    onBackPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(backButton = rect) } },
+                    centerContent = {
+                        if (tunerOn) {
+                            TunnerSmall(
+                                tunner = tunner,
+                                isDaltonic = isDaltonic,
+                                modifier = Modifier
+                                    .then(if (tunerExtendedMode) Modifier.fillMaxWidth() else Modifier.fillMaxWidth(0.8f))
+                                    .height(44.dp)
+                                    .onGloballyPositioned { coords -> onUpdateTutorialTargetLocal { vt -> vt.copy(tunerDisplay = coords.boundsInRoot()) } },
+                                onClick = { showTunerSettings = true }
+                            )
+                        }
+                    }
+                )
+            }
 
             if (concertModeOn) {
                 // ===== MODO CONCIERTO: PDF a pantalla completa con zoom/pan =====
@@ -678,6 +747,8 @@ fun PdfViewerScreen(
                         eraserRadiusNorm = eraserRadiusNorm,
                         smoothingEnabled = smoothingEnabled,
                         onPathAdded = { index, path ->
+                            // Guardamos snapshot para poder deshacer
+                            pushUndo()
                             val finalColor = if (selectedTool == "highlighter") {
                                 currentColor.copy(alpha = 0.5f)
                             } else {
@@ -689,6 +760,8 @@ fun PdfViewerScreen(
                         },
                         onErase = { index, eraserPoints ->
                             val page = annotations.getOrPut(index) { PageAnnotations(index) }
+                            // Guardamos snapshot antes de modificar
+                            pushUndo()
                             if (performErase(page, eraserPoints, eraserRadiusNorm)) {
                                 scheduleSave()
                             }
@@ -761,7 +834,8 @@ fun PdfViewerScreen(
                                 offsetY = 0f
                             }
                         },
-                        onShowTunerSettings = { showTunerSettings = true }
+                        onShowTunerSettings = { showTunerSettings = true },
+                        onUndo = { undo() }
                     )
                 } else {
                     PdfEditModeTablet(
@@ -779,6 +853,8 @@ fun PdfViewerScreen(
                         eraserRadiusNorm = eraserRadiusNorm,
                         smoothingEnabled = smoothingEnabled,
                         onPathAdded = { index, path ->
+                            // Guardamos snapshot para undo
+                            pushUndo()
                             val finalColor = if (selectedTool == "highlighter") {
                                 currentColor.copy(alpha = 0.5f)
                             } else {
@@ -790,6 +866,7 @@ fun PdfViewerScreen(
                         },
                         onErase = { index, eraserPoints ->
                             val page = annotations.getOrPut(index) { PageAnnotations(index) }
+                            pushUndo()
                             if (performErase(page, eraserPoints, eraserRadiusNorm)) {
                                 scheduleSave()
                             }
@@ -862,7 +939,8 @@ fun PdfViewerScreen(
                                 offsetY = 0f
                             }
                         },
-                        onShowTunerSettings = { showTunerSettings = true }
+                        onShowTunerSettings = { showTunerSettings = true },
+                        onUndo = { undo() }
                     )
                 }
             }
@@ -986,7 +1064,8 @@ private fun PdfEditModeTablet(
     onDismissColorPicker: () -> Unit,
     onDismissTunerSettings: () -> Unit,
     onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
-    onShowTunerSettings: () -> Unit
+    onShowTunerSettings: () -> Unit,
+    onUndo: () -> Unit
 ) {
     val topBarHeight = 64.dp
     Box(
@@ -1067,8 +1146,10 @@ private fun PdfEditModeTablet(
                 onToggleSmoothing = onToggleSmoothing,
                 darkMode = darkMode,
                 language = language,
-                onToolboxPositioned = { rect -> onUpdateTutorialTarget { it.copy(toolbox = rect) } }
-            )
+                onToolboxPositioned = { rect -> onUpdateTutorialTarget { it.copy(toolbox = rect) } },
+                hasUndo = undoStack.isNotEmpty(),
+                onUndo = onUndo
+             )
         }
 
         if (showColorPicker) {
@@ -1090,33 +1171,6 @@ private fun PdfEditModeTablet(
             )
         }
     }
-
-    // Barra superior completa con botón de volver y modo concierto
-    StyledTopBar(
-        onBack = onBack,
-        tunerOn = tunerOn,
-        concertModeOn = concertModeOn,
-        highlightBack = false,
-        onTunerClick = onTunerClick,
-        onConcertClick = onConcertClick,
-        darkMode = darkMode,
-        onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
-        onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
-        onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
-        centerContent = {
-            if (tunerOn) {
-                TunnerSmall(
-                    tunner = tunner,
-                    isDaltonic = isDaltonic,
-                    modifier = Modifier
-                        .then(if (tunerExtendedMode) Modifier.fillMaxWidth() else Modifier.fillMaxWidth(0.8f))
-                        .height(44.dp)
-                        .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
-                    onClick = onShowTunerSettings
-                )
-            }
-        }
-    )
 }
 
 @Composable
@@ -1162,7 +1216,8 @@ private fun PdfEditModePhone(
     onDismissColorPicker: () -> Unit,
     onDismissTunerSettings: () -> Unit,
     onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
-    onShowTunerSettings: () -> Unit
+    onShowTunerSettings: () -> Unit,
+    onUndo: () -> Unit
 ) {
     val topBarHeight = 64.dp
     Scaffold(

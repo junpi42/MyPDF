@@ -196,8 +196,9 @@ fun TutorialBlocker(
                 val position = Offset(motionEvent.x, motionEvent.y)
 
                 // Compute close button area (top-left), allow touches to reach the button
-                val closeButtonTouchSizeDp = 56.dp // larger hit target
-                val closeButtonPaddingDp = 16.dp
+                // Match the visual size below: make touch area slightly larger
+                val closeButtonTouchSizeDp = 64.dp // larger hit target
+                val closeButtonPaddingDp = 12.dp
                 val closeSizePx = with(density) { closeButtonTouchSizeDp.toPx() }
                 val closePaddingPx = with(density) { closeButtonPaddingDp.toPx() }
 
@@ -285,7 +286,7 @@ fun TutorialBlocker(
         }
 
         if (showCloseButton) {
-            // Hacemos el botón más grande y con fondo circular y borde para que sea visible
+            // Hacemos el botón más grande, con borde más grueso y fondo semitransparente
             Box(
                 modifier = Modifier
                     .padding(16.dp)
@@ -296,15 +297,15 @@ fun TutorialBlocker(
                 IconButton(
                     onClick = onSkip,
                     modifier = Modifier
-                        .size(56.dp)
-                        .border(width = 2.dp, color = Color.White.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small)
-                        .background(color = Color.Black.copy(alpha = 0.35f), shape = MaterialTheme.shapes.small)
+                        .size(64.dp)
+                        .border(width = 3.dp, color = Color.White.copy(alpha = 0.95f), shape = MaterialTheme.shapes.small)
+                        .background(color = Color.Black.copy(alpha = 0.45f), shape = MaterialTheme.shapes.small)
                 ) {
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = strings().tutorialExit,
                         tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }

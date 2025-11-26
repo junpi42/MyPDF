@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -49,6 +50,8 @@ fun StyledLeftToolBar(
     darkMode: Boolean, // idem
     language: Language, // idem
     onToolboxPositioned: (Rect) -> Unit = {},
+    hasUndo: Boolean = true,
+    onUndo: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val s = strings()
@@ -115,6 +118,18 @@ fun StyledLeftToolBar(
                 size = buttonSize,
                 iconSize = iconSize
             )
+
+            // Botón de Revertir/Deshacer ubicado justo debajo del borrador
+            if (hasUndo) {
+                StyledToolButton(
+                    icon = Icons.Default.Undo,
+                    label = s.toolUndo,
+                    selected = false,
+                    onClick = onUndo,
+                    size = buttonSize,
+                    iconSize = iconSize
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(

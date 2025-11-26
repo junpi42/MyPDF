@@ -3,14 +3,13 @@ package com.example.mypdf
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
@@ -38,7 +36,9 @@ fun StyledTopBar(
     onTunerPositioned: (Rect) -> Unit = {},
     onConcertPositioned: (Rect) -> Unit = {},
     onBackPositioned: (Rect) -> Unit = {},
-    centerContent: @Composable () -> Unit = {}
+    centerContent: @Composable () -> Unit = {},
+    showUndo: Boolean = false,
+    onUndo: () -> Unit = {}
 ) {
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -157,6 +157,21 @@ fun StyledTopBar(
                     modifier = Modifier.size(32.dp * (if (isTablet) 1.5f else 1f))
                 )
             }
-        }
-    }
-}
+
+            // Undo Button (opcional)
+            if (showUndo) {
+                IconButton(
+                    onClick = onUndo,
+                    modifier = Modifier.size(height)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Undo,
+                        contentDescription = strings().toolUndo,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
+                    )
+                }
+            }
+         }
+     }
+ }
