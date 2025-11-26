@@ -3,6 +3,7 @@ package com.example.mypdf
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -77,7 +78,8 @@ private data class ViewerTutorialTargets(
     val tunerButton: Rect? = null,
     val concertButton: Rect? = null,
     val tunerDisplay: Rect? = null,
-    val backButton: Rect? = null
+    val backButton: Rect? = null,
+    val winkButton: Rect? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -130,6 +132,7 @@ fun PdfViewerScreen(
     // Eye control para modo concierto
     var eyeControlEnabled by remember { mutableStateOf(false) }
     var showEyeControlHelp by remember { mutableStateOf(false) }
+    var hasShownEyeControlHelp by remember { mutableStateOf(false) }
     var showCalibrationMenu by remember { mutableStateOf(false) }
     var calibrationStep by remember { mutableStateOf(CalibrationStep.MENU) }
     
@@ -146,6 +149,8 @@ fun PdfViewerScreen(
         TutorialStep.TUNER_ACTIVE -> tutorialTargets.tunerDisplay
         TutorialStep.TUNER_MENU -> tutorialTargets.tunerDisplay
         TutorialStep.CONCERT_MODE -> tutorialTargets.concertButton
+        TutorialStep.WINK_DETECTOR -> tutorialTargets.winkButton
+        TutorialStep.WINK_CALIBRATION -> tutorialTargets.winkButton
         TutorialStep.EXIT_CONCERT -> tutorialTargets.backButton
         else -> null
     }
@@ -190,7 +195,10 @@ fun PdfViewerScreen(
     ) { granted ->
         if (granted) {
             eyeControlEnabled = true
-            showEyeControlHelp = true
+            if (!hasShownEyeControlHelp) {
+                showEyeControlHelp = true
+                hasShownEyeControlHelp = true
+            }
         } else {
             eyeControlEnabled = false
         }
@@ -407,6 +415,25 @@ fun PdfViewerScreen(
 
             if (concertModeOn) {
                 // ===== MODO CONCIERTO: PDF a pantalla completa con zoom/pan =====
+                
+                // Función para pasar a la siguiente página
+                fun goToNextPage() {
+                    val currentIndex = listState.firstVisibleItemIndex
+                    if (currentIndex < pageCount - 1) {
+                        scope.launch {
+                            listState.animateScrollToItem(currentIndex + 1)
+                        }
+                    }
+                }
+                
+                // Estado del eye control
+                val eyeControlState = rememberEyeControlState(
+                    enabled = eyeControlEnabled,
+                    onWinkDetected = {
+                        goToNextPage()
+                    }
+                )
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -508,6 +535,23 @@ fun PdfViewerScreen(
                 } else {
                     if (darkMode) Color.White else Color(0xFF111111)
                 }
+                
+                // Color del botón de casa sincronizado con el ojo
+                val homeIconColor by animateColorAsState(
+                    targetValue = if (highlightBack) {
+                        backColor
+                    } else {
+                        when {
+                            !eyeControlEnabled -> if (darkMode) Color.White else Color(0xFF111111)
+                            eyeControlState.winkState == WinkState.WAITING_FOR_OPEN -> Color(0xFF4CAF50)
+                            eyeControlState.winkState == WinkState.WINK_STARTED -> Color(0xFFFFC107)
+                            eyeControlState.faceDetected -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.error
+                        }
+                    },
+                    animationSpec = tween(300),
+                    label = "homeIconColor"
+                )
 
                 IconButton(
                     onClick = {
@@ -528,28 +572,12 @@ fun PdfViewerScreen(
                     Icon(
                         imageVector = Icons.Default.Home,
                         contentDescription = strings().backDescription,
-                        tint = backColor
+                        tint = homeIconColor
                     )
                 }
                 
                 // ===== EYE CONTROL (Control por guiño) =====
-                // Función para pasar a la siguiente página
-                fun goToNextPage() {
-                    val currentIndex = listState.firstVisibleItemIndex
-                    if (currentIndex < pageCount - 1) {
-                        scope.launch {
-                            listState.animateScrollToItem(currentIndex + 1)
-                        }
-                    }
-                }
-                
-                // Estado del eye control
-                val eyeControlState = rememberEyeControlState(
-                    enabled = eyeControlEnabled,
-                    onWinkDetected = {
-                        goToNextPage()
-                    }
-                )
+                // (Funciones y estado movidos arriba)
                 
                 // Ocultar ayuda después de 5 segundos
                 LaunchedEffect(showEyeControlHelp) {
@@ -571,7 +599,10 @@ fun PdfViewerScreen(
                         } else {
                             ensureCameraPermission {
                                 eyeControlEnabled = true
-                                showEyeControlHelp = true
+                                if (!hasShownEyeControlHelp) {
+                                    showEyeControlHelp = true
+                                    hasShownEyeControlHelp = true
+                                }
                             }
                         }
                     },
@@ -582,6 +613,9 @@ fun PdfViewerScreen(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
+                        .onGloballyPositioned { coordinates ->
+                             tutorialTargets = tutorialTargets.copy(winkButton = coordinates.boundsInRoot())
+                        }
                 )
                 
                 // Diálogo de menú de calibración
@@ -615,7 +649,7 @@ fun PdfViewerScreen(
                 // Tarjeta de ayuda/estado (parte superior central)
                 if (eyeControlEnabled) {
                     EyeControlHelpCard(
-                        visible = showEyeControlHelp || eyeControlState.winkState != WinkState.IDLE || !eyeControlState.faceDetected,
+                        visible = showEyeControlHelp,
                         faceDetected = eyeControlState.faceDetected,
                         winkState = eyeControlState.winkState,
                         modifier = Modifier
@@ -850,6 +884,18 @@ fun PdfViewerScreen(
                 
                 LaunchedEffect(concertModeOn) {
                     if (concertModeOn && tutorialState.step == TutorialStep.CONCERT_MODE) {
+                        advanceTutorial(TutorialStep.WINK_DETECTOR)
+                    }
+                }
+                
+                LaunchedEffect(eyeControlEnabled) {
+                    if (eyeControlEnabled && tutorialState.step == TutorialStep.WINK_DETECTOR) {
+                        advanceTutorial(TutorialStep.WINK_CALIBRATION)
+                    }
+                }
+                
+                LaunchedEffect(showCalibrationMenu) {
+                    if (!showCalibrationMenu && tutorialState.step == TutorialStep.WINK_CALIBRATION) {
                         advanceTutorial(TutorialStep.EXIT_CONCERT)
                     }
                 }
@@ -874,7 +920,13 @@ fun PdfViewerScreen(
                             }
                             TutorialStep.CONCERT_MODE -> {
                                 // En este paso el usuario debe pulsar el botón de concierto real.
-                                // El avance a EXIT_CONCERT se hace en LaunchedEffect(concertModeOn).
+                                // El avance a WINK_DETECTOR se hace en LaunchedEffect(concertModeOn).
+                            }
+                            TutorialStep.WINK_DETECTOR -> {
+                                // El usuario debe pulsar el ojo.
+                            }
+                            TutorialStep.WINK_CALIBRATION -> {
+                                // El usuario debe mantener pulsado.
                             }
                             TutorialStep.EXIT_CONCERT -> {
                                 // El usuario debe pulsar el botón de casa (back) para salir del modo concierto.
@@ -990,9 +1042,12 @@ private fun PdfEditModeTablet(
         }
 
         // Barra lateral de herramientas sólo en modo edición
+        val config = LocalConfiguration.current
+        val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
+        
         Box(
             modifier = Modifier
-                .fillMaxHeight(0.75f)
+                .fillMaxHeight(if (isPortrait) 0.75f else 1f)
                 .align(Alignment.CenterStart)
         ) {
             StyledLeftToolBar(

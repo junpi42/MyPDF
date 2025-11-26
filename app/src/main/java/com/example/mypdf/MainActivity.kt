@@ -102,8 +102,9 @@ class MainActivity : ComponentActivity() {
             }
 
             MyPDFTheme(darkTheme = darkMode) {
-                ProvideStrings(language = language) {
-                    Surface(modifier = Modifier.fillMaxSize()) {
+                // Pasamos el código de idioma (EN, ES, FR, IT) a ProvideStrings
+                ProvideStrings(languageCode = language.name) {
+                     Surface(modifier = Modifier.fillMaxSize()) {
                         val deviceType = rememberDeviceType()
                         if (showOnboarding) {
                             // Determine system language for initial onboarding
@@ -739,6 +740,9 @@ fun LibraryScreen(
 
     // Settings Dialog (restored)
     if (showSettingsDialog) {
+        // Calcula las columnas actuales según el tamaño de pantalla y el gridScale/ baseMin
+        val currentColumns = columns.coerceAtLeast(1)
+
         SettingsDialog(
             isDarkMode = isDarkMode,
             onToggleDarkMode = onToggleDarkMode,
@@ -746,8 +750,17 @@ fun LibraryScreen(
             onToggleDaltonic = onToggleDaltonic,
             language = language,
             onLanguageChange = onLanguageChange,
-            gridScale = gridScale,
-            onGridScaleChange = onGridScaleChange,
+            gridColumns = currentColumns,
+            onColumnsChange = { newCols ->
+                // Convierte el número de columnas deseado a un gridScale aproximado
+                val cols = newCols.coerceAtLeast(1)
+                val newScale = try {
+                    ((screenWidthDp.toFloat() / cols.toFloat()) / baseMin.toFloat())
+                } catch (e: Exception) { gridScale }
+                // Limitar para mantener coherencia visual
+                val bounded = newScale.coerceIn(0.5f, 1.5f)
+                onGridScaleChange(bounded)
+            },
             onResetTutorial = {
                 onResetTutorial()
                 onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
@@ -1716,4 +1729,3 @@ fun EmptyLibraryView(
         }
     }
 }
-
