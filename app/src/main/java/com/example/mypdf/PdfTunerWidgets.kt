@@ -67,7 +67,7 @@ fun TunnerSmall(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
-            .clickable(onClick = onClick),
+            .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
