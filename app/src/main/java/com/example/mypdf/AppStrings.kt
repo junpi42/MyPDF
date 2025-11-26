@@ -1,5 +1,6 @@
 package com.example.mypdf
 
+import com.example.mypdf.Language
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 
@@ -815,13 +816,12 @@ object StringsIt : AppStrings {
 
 
 // Selección de textos en función de un código de idioma simple (por ejemplo: "EN", "ES", "FR", "IT").
-fun stringsFor(langCode: String): AppStrings {
-    return when (langCode.uppercase()) {
-        "EN" -> StringsEn
-        "ES" -> StringsEs
-        "FR" -> StringsFr
-        "IT" -> StringsIt
-        else -> StringsEn
+fun stringsFor(language: Language): AppStrings {
+    return when (language) {
+        Language.EN -> StringsEn
+        Language.ES -> StringsEs
+        Language.FR -> StringsFr
+        Language.IT -> StringsIt
     }
 }
 
@@ -830,8 +830,8 @@ val LocalStrings = staticCompositionLocalOf<AppStrings> {
 }
 
 @Composable
-fun ProvideStrings(languageCode: String, content: @Composable () -> Unit) {
-    val strings = stringsFor(languageCode)
+fun ProvideStrings(language: Language, content: @Composable () -> Unit) {
+    val strings = stringsFor(language)
     androidx.compose.runtime.CompositionLocalProvider(LocalStrings provides strings) {
         content()
     }

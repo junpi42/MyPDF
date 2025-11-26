@@ -4,6 +4,8 @@ import android.view.MotionEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -190,18 +192,32 @@ fun TutorialBlocker(
                 if (isDialogStep) {
                     return@pointerInteropFilter false
                 }
-                
+
                 val position = Offset(motionEvent.x, motionEvent.y)
-                
+
+                // Compute close button area (top-left), allow touches to reach the button
+                val closeButtonTouchSizeDp = 56.dp // larger hit target
+                val closeButtonPaddingDp = 16.dp
+                val closeSizePx = with(density) { closeButtonTouchSizeDp.toPx() }
+                val closePaddingPx = with(density) { closeButtonPaddingDp.toPx() }
+
+                val insideCloseArea = position.x >= closePaddingPx && position.x <= (closePaddingPx + closeSizePx) &&
+                                       position.y >= closePaddingPx && position.y <= (closePaddingPx + closeSizePx)
+
+                if (insideCloseArea && showCloseButton) {
+                    // Let the IconButton receive the event
+                    return@pointerInteropFilter false
+                }
+
                 // Calculate anchor rect in current coordinates
                 val anchorRectLocal = if (targetRect != null && !targetRect.isEmpty) {
                     targetRect.translate(-rootOffset.x, -rootOffset.y)
                 } else {
                     null
                 }
-                
+
                 val isInsideSpotlight = anchorRectLocal?.contains(position) == true
-                
+
                 if (isInsideSpotlight) {
                     // Inside spotlight: return false to let the event pass through
                     false
@@ -269,14 +285,28 @@ fun TutorialBlocker(
         }
 
         if (showCloseButton) {
-            IconButton(
-                onClick = onSkip,
+            // Hacemos el botón más grande y con fondo circular y borde para que sea visible
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
                     .padding(16.dp)
                     .statusBarsPadding()
+                    .wrapContentSize()
+                    .align(Alignment.TopStart)
             ) {
-                Icon(Icons.Filled.Close, contentDescription = strings().tutorialExit, tint = Color.White)
+                IconButton(
+                    onClick = onSkip,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .border(width = 2.dp, color = Color.White.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small)
+                        .background(color = Color.Black.copy(alpha = 0.35f), shape = MaterialTheme.shapes.small)
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = strings().tutorialExit,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
@@ -398,7 +428,7 @@ private fun BoxWithConstraintsScope.StickyNote(
     }
     if (spaceBottom >= measuredHeightPx) {
         val cx = rect.left + rect.width / 2f - measuredWidthPx / 2f
-        val cy = rect.bottom + spacingPx
+        val cy = rect.bottom + spacingPx + measuredHeightPx
         candidates += "bottom" to (cx to cy)
     }
     if (spaceLeft >= measuredWidthPx) {

@@ -13,8 +13,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,15 +55,15 @@ fun OnboardingDialog(
     onFinish: (Language, Boolean, Boolean) -> Unit
 ) {
     // State for the onboarding flow
-    var currentLanguage by remember { mutableStateOf(initialLanguage) }
-    var isDarkMode by remember { mutableStateOf(false) }
-    var isDaltonic by remember { mutableStateOf(false) }
-    var currentStep by remember { mutableStateOf(OnboardingStep.Welcome) }
+    var currentLanguage by rememberSaveable { mutableStateOf(initialLanguage) }
+    var isDarkMode by rememberSaveable { mutableStateOf(false) }
+    var isDaltonic by rememberSaveable { mutableStateOf(false) }
+    var currentStep by rememberSaveable { mutableStateOf(OnboardingStep.Welcome) }
 
     // Registration/Login state
-    var username by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var username by rememberSaveable { mutableStateOf("") }
+    var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
 
     // We use a derived state for strings so they update immediately when language changes
     val s = stringsFor(currentLanguage)
@@ -101,6 +103,29 @@ fun OnboardingDialog(
         ) {
             // Animated Background
             AnimatedGradientBackground(baseColor = baseColor)
+
+            // Botón X en la esquina superior derecha: grande y visible
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp),
+                contentAlignment = Alignment.TopEnd
+            ) {
+                IconButton(
+                    onClick = { onFinish(currentLanguage, isDarkMode, isDaltonic) },
+                    modifier = Modifier
+                        .size(56.dp)
+                        .border(width = 2.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small)
+                        .background(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), shape = MaterialTheme.shapes.small)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Cerrar onboarding",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
 
             Column(
                 modifier = Modifier

@@ -311,13 +311,23 @@ fun SettingsDialog(
                     val ctx = LocalContext.current
                     val minCols = try { ctx.resources.getInteger(R.integer.grid_min_columns) } catch (e: Exception) { 1 }
                     val maxCols = try { ctx.resources.getInteger(R.integer.grid_max_columns) } catch (e: Exception) { 4 }
-                    val range = (maxCols - minCols).coerceAtLeast(1)
+                    // Detect tablet and double the minimum when on tablet as requested
+                    val configuration = ctx.resources.configuration
+                    val screenWidthDp = configuration.screenWidthDp
+                    val isTabletLocal = screenWidthDp >= 600
+                    val effectiveMin = if (isTabletLocal) {
+                        // Ensure we don't exceed maxCols-1
+                        (minCols * 2).coerceAtMost(maxCols - 1)
+                    } else minCols
 
-                    // Slider mapea 0 -> maxCols (más columnas, celdas pequeñas), range -> minCols (menos columnas, celdas grandes)
+                    val range = (maxCols - effectiveMin).coerceAtLeast(1)
+
+                    // Slider: 0 -> maxCols, range -> effectiveMin
+                    val sliderValue = (maxCols - gridColumns).toFloat().coerceIn(0f, range.toFloat())
                     Slider(
-                        value = (maxCols - gridColumns).toFloat().coerceIn(0f, range.toFloat()),
+                        value = sliderValue,
                         onValueChange = { v ->
-                            val cols = (maxCols - v.toInt()).coerceIn(minCols, maxCols)
+                            val cols = (maxCols - v.toInt()).coerceIn(effectiveMin, maxCols)
                             onColumnsChange(cols)
                         },
                         valueRange = 0f..range.toFloat(),
