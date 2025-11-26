@@ -52,6 +52,8 @@ enum class TutorialStep {
     TUNER_ACTIVE,
     TUNER_MENU,
     CONCERT_MODE,
+    WINK_DETECTOR,
+    WINK_CALIBRATION,
     EXIT_CONCERT,
     FINISHED
 }
@@ -85,6 +87,8 @@ fun TutorialOverlay(
         TutorialStep.TUNER_ACTIVE -> s.tutorialTunerActiveTitle to s.tutorialTunerActiveBody
         TutorialStep.TUNER_MENU -> s.tutorialTunerMenuTitle to s.tutorialTunerMenuBody
         TutorialStep.CONCERT_MODE -> s.tutorialConcertModeTitle to s.tutorialConcertModeBody
+        TutorialStep.WINK_DETECTOR -> s.tutorialWinkDetectorTitle to s.tutorialWinkDetectorBody
+        TutorialStep.WINK_CALIBRATION -> s.tutorialWinkCalibrationTitle to s.tutorialWinkCalibrationBody
         TutorialStep.EXIT_CONCERT -> s.tutorialExitConcertTitle to s.tutorialExitConcertBody
         TutorialStep.FINISHED -> s.tutorialFinishedTitle to s.tutorialFinishedBody
         else -> "" to ""
@@ -127,7 +131,10 @@ fun TutorialOverlay(
             TutorialStep.OPEN_FILE,
             TutorialStep.TUNER_BUTTON,
             TutorialStep.TUNER_ACTIVE,
+            TutorialStep.TUNER_ACTIVE,
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> true
             else -> false
         }
@@ -326,6 +333,8 @@ private fun fallbackRectForStep(
             TutorialStep.TUNER_ACTIVE,
             TutorialStep.TUNER_MENU -> rectAt(0.62f, 0.25f, widthDp = 220.dp, heightDp = 96.dp)
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f, widthDp = 140.dp, heightDp = 72.dp)
             else -> rectAt(0.6f, 0.5f)
         }
@@ -342,6 +351,8 @@ private fun fallbackRectForStep(
             TutorialStep.TUNER_ACTIVE,
             TutorialStep.TUNER_MENU -> rectAt(0.5f, 0.25f)
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f)
             else -> rectAt(0.5f, 0.5f)
         }

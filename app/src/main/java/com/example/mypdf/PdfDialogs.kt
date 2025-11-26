@@ -184,8 +184,9 @@ fun SettingsDialog(
     onToggleDaltonic: () -> Unit,
     language: Language,
     onLanguageChange: (Language) -> Unit,
-    gridScale: Float,
-    onGridScaleChange: (Float) -> Unit,
+    // Ahora controlamos columnas en vez de un "gridScale" directo.
+    gridColumns: Int,
+    onColumnsChange: (Int) -> Unit,
     onResetTutorial: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -297,7 +298,7 @@ fun SettingsDialog(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                // Grid Size
+                // Grid Size (ahora controla número de columnas).
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.GridView, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -305,12 +306,25 @@ fun SettingsDialog(
                         Text(s.gridSize, style = MaterialTheme.typography.titleMedium)
                     }
                     Spacer(Modifier.height(8.dp))
+
+                    // Leemos los límites desde recursos para poder personalizar por dispositivos (res/values, res/values-sw600dp)
+                    val ctx = LocalContext.current
+                    val minCols = try { ctx.resources.getInteger(R.integer.grid_min_columns) } catch (e: Exception) { 1 }
+                    val maxCols = try { ctx.resources.getInteger(R.integer.grid_max_columns) } catch (e: Exception) { 4 }
+                    val range = (maxCols - minCols).coerceAtLeast(1)
+
+                    // Slider mapea 0 -> maxCols (más columnas, celdas pequeñas), range -> minCols (menos columnas, celdas grandes)
                     Slider(
-                        value = gridScale,
-                        onValueChange = onGridScaleChange,
-                        valueRange = 0.5f..1.5f,
-                        steps = 2
+                        value = (maxCols - gridColumns).toFloat().coerceIn(0f, range.toFloat()),
+                        onValueChange = { v ->
+                            val cols = (maxCols - v.toInt()).coerceIn(minCols, maxCols)
+                            onColumnsChange(cols)
+                        },
+                        valueRange = 0f..range.toFloat(),
+                        steps = (range - 1).coerceAtLeast(0)
                     )
+                    Spacer(Modifier.height(6.dp))
+                    Text(text = "${gridColumns} columnas", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
