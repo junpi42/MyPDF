@@ -68,7 +68,7 @@ private fun formatRelativeDate(ts: Long): String {
 }
 
 
-private enum class SortOption { BY_NAME, BY_DATE, BY_SIZE }
+enum class SortOption { BY_NAME, BY_DATE, BY_SIZE }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity() {
             MyPDFTheme(darkTheme = darkMode) {
                 ProvideStrings(language = language) {
                     Surface(modifier = Modifier.fillMaxSize()) {
+                        val deviceType = rememberDeviceType()
                         if (showOnboarding) {
                             // Determine system language for initial onboarding
                             val systemLang = java.util.Locale.getDefault().language
@@ -120,7 +121,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         } else {
-                            AppRoot(
+                            AppRootAdaptive(
+                                deviceType = deviceType,
                                 isDarkMode = darkMode,
                                 onToggleDarkMode = { darkMode = !darkMode; save() },
                                 isDaltonic = isDaltonic,
@@ -145,7 +147,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppRoot(
+private fun AppRootAdaptive(
+    deviceType: DeviceType,
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
     isDaltonic: Boolean,
@@ -177,6 +180,7 @@ private fun AppRoot(
         Box(modifier = Modifier.padding(innerPadding)) {
             if (selectedFile == null) {
                 LibraryScreen(
+                    deviceType = deviceType,
                     onOpen = { selectedPath = it.absolutePath },
                     isDarkMode = isDarkMode,
                     onToggleDarkMode = onToggleDarkMode,
@@ -197,6 +201,7 @@ private fun AppRoot(
                 )
             } else {
                 PdfEditScreen(
+                    deviceType = deviceType,
                     file = selectedFile,
                     onBack = { selectedPath = null },
                     isDarkMode = isDarkMode,
@@ -215,9 +220,16 @@ private fun AppRoot(
     }
 }
 
+private data class LibraryTutorialTargets(
+    val newCategory: Rect? = null,
+    val fab: Rect? = null,
+    val importedCard: Rect? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(
+    deviceType: DeviceType,
     onOpen: (File) -> Unit,
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit,
@@ -239,12 +251,8 @@ fun LibraryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Tutorial targets local state
-    data class TutorialTargets(
-        val newCategory: Rect? = null,
-        val fab: Rect? = null,
-        val importedCard: Rect? = null
-    )
-    var tutorialTargets by remember { mutableStateOf(TutorialTargets()) }
+
+    var tutorialTargets by remember { mutableStateOf(LibraryTutorialTargets()) }
 
     fun resolveTarget(step: TutorialStep): Rect? = when (step) {
         TutorialStep.NEW_CATEGORY -> tutorialTargets.newCategory
@@ -343,10 +351,13 @@ fun LibraryScreen(
     val effectiveSidebarWidth = if (sidebarWidth == 0.dp) 80.dp else sidebarWidth
     val isCompactSidebar = effectiveSidebarWidth < 200.dp
 
-    val minColWidth = 180
-    val maxCols = (screenWidthDp / minColWidth).coerceAtLeast(1)
-    val t = ((gridScale - 0.5f) / 1.0f).coerceIn(0f, 1f)
-    val columns = (1 + (maxCols - 1) * (1.0f - t)).toInt().coerceAtLeast(1)
+    val baseMin = when (deviceType) {
+        DeviceType.TABLET_LARGE -> 220
+        DeviceType.TABLET -> 180
+        DeviceType.PHONE -> 140
+    }
+    val adjustedMin = (baseMin * gridScale).toInt().coerceAtLeast(100)
+    val columns = (screenWidthDp / adjustedMin).coerceAtLeast(1)
 
     suspend fun ensureDefaultCategory(): File {
         val (rootDirs, _) = listLibraryFolder(context, "")
@@ -451,350 +462,96 @@ fun LibraryScreen(
         }
     )
 
-    Row(Modifier.fillMaxSize()) {
-        // --- SIDEBAR ---
-        Surface(
-            tonalElevation = 1.dp,
-            modifier = Modifier.width(effectiveSidebarWidth).fillMaxHeight(),
-            color = MaterialTheme.colorScheme.surfaceContainerLow
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // App Title / Header
-                if (!isCompactSidebar) {
-                    Text(
-                        text = "PentagramApp",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(vertical = 24.dp, horizontal = 8.dp).align(Alignment.Start)
-                    )
-                } else {
-                    Spacer(Modifier.height(16.dp))
-                    Text("PDF", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(16.dp))
+    val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
+    val showFolders = if (query.isNotBlank()) emptyList<File>() else folders
+
+    if (deviceType == DeviceType.PHONE) {
+        LibraryScreenPhone(
+            gridScale = gridScale,
+            categories = categories,
+            selectedCategory = selectedCategory,
+            onSelectCategory = { selectedCategory = it },
+            onEditFile = { f, isDir ->
+                if (tutorialState.step == TutorialStep.LONG_PRESS_FILE) {
+                    advanceTutorial(TutorialStep.OPTIONS_MENU)
                 }
-
-                // Categories Header
-                if (!isCompactSidebar) {
-                    Text(
-                        text = s.categories.uppercase(),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, bottom = 8.dp)
-                    )
+                fileToEdit = f
+                isDirTarget = isDir
+                renameText = if (isDir) f.name else f.nameWithoutExtension
+                showFileOptionsDialog = true
+            },
+            s = s,
+            tutorialState = tutorialState,
+            advanceTutorial = { advanceTutorial(it) },
+            onShowNewCategoryDialog = { showNewCategoryDialog = true },
+            onUpdateTutorialTarget = { tutorialTargets = it },
+            tutorialTargets = tutorialTargets,
+            onShowSettingsDialog = { showSettingsDialog = true },
+            fabMenuExpanded = fabMenuExpanded,
+            onFabMenuExpanded = { fabMenuExpanded = it },
+            onImportPdf = { picker.launch(arrayOf("application/pdf")) },
+            onShowNewFolderDialog = { showNewFolderDialog = true },
+            query = query,
+            onQueryChange = { query = it },
+            sortOption = sortOption,
+            onSortOptionChange = { sortOption = it },
+            sortAsc = sortAsc,
+            onSortAscChange = { sortAsc = it },
+            displayFiles = showFiles,
+            displayFolders = showFolders,
+            loading = loading,
+            searching = searching,
+            thumbs = thumbs,
+            columns = columns,
+            onOpen = onOpen,
+            notifyTutorialHint = { notifyTutorialHint(it) },
+            tutorialsEnabled = tutorialsEnabled
+        )
+    } else {
+        LibraryScreenTablet(
+            gridScale = gridScale,
+            effectiveSidebarWidth = effectiveSidebarWidth,
+            isCompactSidebar = isCompactSidebar,
+            categories = categories,
+            selectedCategory = selectedCategory,
+            onSelectCategory = { selectedCategory = it },
+            onEditFile = { f, isDir ->
+                if (tutorialState.step == TutorialStep.LONG_PRESS_FILE) {
+                    advanceTutorial(TutorialStep.OPTIONS_MENU)
                 }
-
-                // Categories List
-                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(categories) { cat ->
-                        val selected = cat == selectedCategory
-                        CategoryItem(
-                            name = cat.name,
-                            selected = selected,
-                            compact = isCompactSidebar,
-                            onClick = { selectedCategory = cat },
-                            onLongClick = {
-                                fileToEdit = cat
-                                isDirTarget = true
-                                renameText = cat.name
-                                showFileOptionsDialog = true
-                            }
-                        )
-                    }
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        if (isCompactSidebar) {
-                            IconButton(
-                                onClick = {
-                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
-                                        advanceTutorial(TutorialStep.FAB)
-                                    }
-                                    showNewCategoryDialog = true
-                                },
-                                modifier = Modifier.onGloballyPositioned {
-                                    tutorialTargets = tutorialTargets.copy(newCategory = it.boundsInRoot())
-                                }
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = s.newCategory)
-                            }
-                        } else {
-                            TextButton(
-                                onClick = {
-                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
-                                        advanceTutorial(TutorialStep.FAB)
-                                    }
-                                    showNewCategoryDialog = true
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp)
-                                    .onGloballyPositioned {
-                                        tutorialTargets = tutorialTargets.copy(newCategory = it.boundsInRoot())
-                                    },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(s.newCategory)
-                            }
-                        }
-                    }
-                }
-
-                // Bottom Settings Area
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                if (isCompactSidebar) {
-                    IconButton(onClick = { showSettingsDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = s.themes,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                } else {
-                    TextButton(
-                        onClick = { showSettingsDialog = true },
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(28.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Text(s.settingsTitle, style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-        }
-
-        // --- MAIN CONTENT ---
-        Scaffold(
-            modifier = Modifier.weight(1f),
-            floatingActionButton = {
-                FloatingActionButton(
-                    onClick = {
-                        if (tutorialState.step == TutorialStep.FAB) {
-                            advanceTutorial(TutorialStep.IMPORT_PDF_MENU)
-                        }
-                        fabMenuExpanded = true
-                    },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.onGloballyPositioned {
-                        tutorialTargets = tutorialTargets.copy(fab = it.boundsInRoot())
-                    }
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-
-                    // Custom Menu for Tutorial or Standard Dropdown
-                    if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
-                        // We can't easily highlight inside the standard DropdownMenu because it's a Popup.
-                        // We will use a custom Box that looks like the menu for the tutorial step.
-                        // Or we just let the standard menu open and try to guide the user.
-                        // But the user requested "highlight the button to add pdf".
-                        // Let's use the standard menu but maybe we can't block clicks on "Create Folder".
-                        // To strictly follow "only can click add pdf", we should probably NOT show the real menu
-                        // and show a fake menu in the overlay.
-                        // But for simplicity, let's use the real menu and hope for the best regarding "blocking".
-                        // Actually, if we are in tutorial mode, we can render a custom Column here instead of DropdownMenu?
-                        // No, DropdownMenu is a Popup.
-                        
-                        // Let's just use DropdownMenu and hope for the best regarding "blocking".
-                        // To highlight it, we need its position. It usually appears near the FAB.
-                    }
-                    
-                    DropdownMenu(
-                        expanded = fabMenuExpanded,
-                        onDismissRequest = {
-                            if (tutorialState.step != TutorialStep.IMPORT_PDF_MENU) {
-                                fabMenuExpanded = false
-                            }
-                        }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(s.importPdf) },
-                            leadingIcon = { Icon(Icons.Default.UploadFile, null) },
-                            modifier = if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
-                                Modifier.background(MaterialTheme.colorScheme.primaryContainer)
-                            } else Modifier,
-                            onClick = {
-                                fabMenuExpanded = false
-                                picker.launch(arrayOf("application/pdf"))
-                                if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
-                                    advanceTutorial(TutorialStep.LONG_PRESS_FILE)
-                                }
-                            }
-                        )
-                        
-                        // Siempre mostramos también "Crear carpeta" durante el tutorial, pero sin afectar al flujo
-                        val createFolderEnabled = tutorialState.step != TutorialStep.IMPORT_PDF_MENU
-                        DropdownMenuItem(
-                            text = { Text(s.createFolder) },
-                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
-                            enabled = createFolderEnabled,
-                            onClick = {
-                                fabMenuExpanded = false
-                                showNewFolderDialog = true
-                            }
-                        )
-                    }
-                }
-            }
-        ) { padding ->
-            Column(Modifier.padding(padding).fillMaxSize()) {
-                // Top Bar / Search
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.weight(1f),
-                            shape = MaterialTheme.shapes.extraLarge,
-                            placeholder = { Text(s.searchInLibrary) },
-                            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Search, contentDescription = null) },
-                            singleLine = true,
-                            colors = androidx.compose.material3.TextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
-                            )
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        // Sort Button
-                        Box {
-                            var sortMenuExpanded by remember { mutableStateOf(false) }
-                            FilledTonalButton(onClick = { sortMenuExpanded = true }) {
-                                Icon(androidx.compose.material.icons.Icons.Default.Sort, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    when (sortOption) {
-                                        SortOption.BY_NAME -> s.sortByName
-                                        SortOption.BY_DATE -> s.sortByDate
-                                        SortOption.BY_SIZE -> s.sortBySize
-                                    }
-                                )
-                            }
-                            DropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) {
-                                DropdownMenuItem(text = { Text(s.sortByName) }, onClick = { sortOption = SortOption.BY_NAME; sortMenuExpanded = false })
-                                DropdownMenuItem(text = { Text(s.sortByDate) }, onClick = { sortOption = SortOption.BY_DATE; sortMenuExpanded = false })
-                                DropdownMenuItem(text = { Text(s.sortBySize) }, onClick = { sortOption = SortOption.BY_SIZE; sortMenuExpanded = false })
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text(if (sortAsc) "Ascending" else "Descending") }, // Could add string resource
-                                    trailingIcon = { Icon(if (sortAsc) androidx.compose.material.icons.Icons.Default.ArrowUpward else androidx.compose.material.icons.Icons.Default.ArrowDownward, null) },
-                                    onClick = { sortAsc = !sortAsc; sortMenuExpanded = false }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
-                val showFolders = if (query.isNotBlank()) emptyList<File>() else folders
-
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    when {
-                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-
-                        showFiles.isEmpty() && showFolders.isEmpty() -> Box(
-                            Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    androidx.compose.material.icons.Icons.Default.SentimentDissatisfied,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(48.dp),
-                                    tint = MaterialTheme.colorScheme.outline
-                                )
-                                Spacer(Modifier.height(16.dp))
-                                Text(
-                                    if (searching) s.searching else s.emptyList,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        else -> {
-                            LazyVerticalGrid(
-                                columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(columns),
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(bottom = 96.dp, top = 8.dp)
-                            ) {
-                                items(showFolders.size) { i ->
-                                    val dir = showFolders[i]
-                                    FolderCard(
-                                        name = dir.name,
-                                        onClick = { selectedCategory = dir },
-                                        onLongClick = {
-                                            fileToEdit = dir
-                                            isDirTarget = true
-                                            renameText = dir.name
-                                            showFileOptionsDialog = true
-                                        }
-                                    )
-                                }
-                                items(showFiles.size) { i ->
-                                    val f = showFiles[i]
-                                    val bmp = thumbs[f]
-                                    // Check if this is the file to highlight (e.g. the most recent one or just the first one)
-                                    // For tutorial, we assume the user just imported a file, so it should be at the top if sorted by date.
-                                    // Or we can just highlight the first file.
-                                    val isTarget = tutorialsEnabled && i == 0
-                                    val modifierWithTarget = if (isTarget) Modifier.onGloballyPositioned {
-                                        tutorialTargets = tutorialTargets.copy(importedCard = it.boundsInRoot())
-                                    } else Modifier
-                                    PdfCard(
-                                        name = f.nameWithoutExtension,
-                                        sizeText = formatBytes(f.length()),
-                                        dateText = formatRelativeDate(f.lastModified()),
-                                        thumbnail = bmp,
-                                        modifier = modifierWithTarget,
-                                        onClick = {
-                                            when (tutorialState.step) {
-                                                TutorialStep.OPEN_FILE -> {
-                                                    onTutorialStateChange(tutorialState.copy(step = TutorialStep.TOOLBOX))
-                                                    onOpen(f)
-                                                }
-                                                TutorialStep.NONE -> onOpen(f)
-                                                else -> notifyTutorialHint(s.tutorialLongPressBody)
-                                            }
-                                        },
-                                        onLongClick = {
-                                            if (tutorialState.step == TutorialStep.LONG_PRESS_FILE && isTarget) {
-                                                advanceTutorial(TutorialStep.OPTIONS_MENU)
-                                                fileToEdit = f
-                                                isDirTarget = false
-                                                renameText = f.nameWithoutExtension
-                                                showFileOptionsDialog = true
-                                            } else if (tutorialState.step == TutorialStep.NONE) {
-                                                fileToEdit = f
-                                                isDirTarget = false
-                                                renameText = f.nameWithoutExtension
-                                                showFileOptionsDialog = true
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                fileToEdit = f
+                isDirTarget = isDir
+                renameText = if (isDir) f.name else f.nameWithoutExtension
+                showFileOptionsDialog = true
+            },
+            s = s,
+            tutorialState = tutorialState,
+            advanceTutorial = { advanceTutorial(it) },
+            onShowNewCategoryDialog = { showNewCategoryDialog = true },
+            onUpdateTutorialTarget = { tutorialTargets = it },
+            tutorialTargets = tutorialTargets,
+            onShowSettingsDialog = { showSettingsDialog = true },
+            fabMenuExpanded = fabMenuExpanded,
+            onFabMenuExpanded = { fabMenuExpanded = it },
+            onImportPdf = { picker.launch(arrayOf("application/pdf")) },
+            onShowNewFolderDialog = { showNewFolderDialog = true },
+            query = query,
+            onQueryChange = { query = it },
+            sortOption = sortOption,
+            onSortOptionChange = { sortOption = it },
+            sortAsc = sortAsc,
+            onSortAscChange = { sortAsc = it },
+            globalResults = showFiles,
+            pdfs = showFiles,
+            folders = showFolders,
+            loading = loading,
+            searching = searching,
+            thumbs = thumbs,
+            columns = columns,
+            onOpen = onOpen,
+            notifyTutorialHint = { notifyTutorialHint(it) },
+            tutorialsEnabled = tutorialsEnabled
+        )
     }
 
     // Dialogs (kept mostly same logic, just updated UI slightly if needed)
@@ -1008,7 +765,8 @@ fun LibraryScreen(
                 advanceTutorial(TutorialStep.NEW_CATEGORY)
             }
         },
-        onDismiss = onTutorialComplete
+        onDismiss = onTutorialComplete,
+        isTablet = deviceType != DeviceType.PHONE
     )
 
     SnackbarHost(hostState = snackbarHostState)
@@ -1279,3 +1037,683 @@ private object Perf {
         android.util.Log.d(TAG, "========================")
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryScreenPhone(
+    gridScale: Float,
+    categories: List<File>,
+    selectedCategory: File?,
+    onSelectCategory: (File) -> Unit,
+    onEditFile: (File, Boolean) -> Unit,
+    s: AppStrings,
+    tutorialState: TutorialState,
+    advanceTutorial: (TutorialStep) -> Unit,
+    onShowNewCategoryDialog: () -> Unit,
+    onUpdateTutorialTarget: (LibraryTutorialTargets) -> Unit,
+    tutorialTargets: LibraryTutorialTargets,
+    onShowSettingsDialog: () -> Unit,
+    fabMenuExpanded: Boolean,
+    onFabMenuExpanded: (Boolean) -> Unit,
+    onImportPdf: () -> Unit,
+    onShowNewFolderDialog: () -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    sortOption: SortOption,
+    onSortOptionChange: (SortOption) -> Unit,
+    sortAsc: Boolean,
+    onSortAscChange: (Boolean) -> Unit,
+    displayFiles: List<File>,
+    displayFolders: List<File>,
+    loading: Boolean,
+    searching: Boolean,
+    thumbs: Map<File, Bitmap?>,
+    columns: Int,
+    onOpen: (File) -> Unit,
+    notifyTutorialHint: (String) -> Unit,
+    tutorialsEnabled: Boolean
+) {
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Spacer(Modifier.height(12.dp))
+                Text("PentagramApp", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.headlineSmall)
+                HorizontalDivider()
+                
+                LazyColumn {
+                    items(count = categories.size) { index ->
+                        val cat = categories[index]
+                        NavigationDrawerItem(
+                            label = { Text(cat.name) },
+                            selected = cat == selectedCategory,
+                            onClick = {
+                                onSelectCategory(cat)
+                                scope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                        )
+                    }
+                    item {
+                        NavigationDrawerItem(
+                            label = { Text(s.newCategory) },
+                            selected = false,
+                            icon = { Icon(Icons.Default.Add, null) },
+                            onClick = {
+                                onShowNewCategoryDialog()
+                                scope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                        )
+                    }
+                    item {
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        NavigationDrawerItem(
+                            label = { Text(s.settingsTitle) },
+                            selected = false,
+                            icon = { Icon(Icons.Default.Settings, null) },
+                            onClick = {
+                                onShowSettingsDialog()
+                                scope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                        )
+                    }
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = { Text(selectedCategory?.name ?: "PDF") },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    },
+                    actions = {
+                        // Sort button
+                        Box {
+                            var sortMenuExpanded by remember { mutableStateOf(false) }
+                            IconButton(onClick = { sortMenuExpanded = true }) {
+                                Icon(Icons.Default.Sort, contentDescription = "Sort")
+                            }
+                            DropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) {
+                                DropdownMenuItem(text = { Text(s.sortByName) }, onClick = { onSortOptionChange(SortOption.BY_NAME); sortMenuExpanded = false })
+                                DropdownMenuItem(text = { Text(s.sortByDate) }, onClick = { onSortOptionChange(SortOption.BY_DATE); sortMenuExpanded = false })
+                                DropdownMenuItem(text = { Text(s.sortBySize) }, onClick = { onSortOptionChange(SortOption.BY_SIZE); sortMenuExpanded = false })
+                            }
+                        }
+                    }
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = {
+                        if (tutorialState.step == TutorialStep.FAB) {
+                            advanceTutorial(TutorialStep.IMPORT_PDF_MENU)
+                        }
+                        onFabMenuExpanded(true)
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    DropdownMenu(
+                        expanded = fabMenuExpanded,
+                        onDismissRequest = { onFabMenuExpanded(false) }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(s.importPdf) },
+                            leadingIcon = { Icon(Icons.Default.UploadFile, null) },
+                            onClick = {
+                                onFabMenuExpanded(false)
+                                onImportPdf()
+                                if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                                    advanceTutorial(TutorialStep.LONG_PRESS_FILE)
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(s.createFolder) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            onClick = {
+                                onFabMenuExpanded(false)
+                                onShowNewFolderDialog()
+                            }
+                        )
+                    }
+                }
+            }
+        ) { padding ->
+            Column(Modifier.padding(padding).fillMaxSize()) {
+                // Search bar
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    placeholder = { Text(s.searchInLibrary) },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    singleLine = true
+                )
+                
+                // Content
+                Box(Modifier.weight(1f)) {
+                    if (loading) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            items(count = displayFolders.size) { index ->
+                                val folder = displayFolders[index]
+                                FolderItem(
+                                    file = folder,
+                                    onClick = { onOpen(folder) },
+                                    onLongClick = { onEditFile(folder, true) },
+                                    s = s,
+                                    sizeScale = gridScale
+                                )
+                            }
+                            items(count = displayFiles.size) { index ->
+                                val file = displayFiles[index]
+                                val highlightImported = tutorialsEnabled &&
+                                    tutorialState.step in setOf(
+                                        TutorialStep.LONG_PRESS_FILE,
+                                        TutorialStep.OPTIONS_MENU,
+                                        TutorialStep.RENAME_DIALOG,
+                                        TutorialStep.OPEN_FILE
+                                    ) &&
+                                    index == 0
+                                PdfFileItem(
+                                    file = file,
+                                    thumb = thumbs[file],
+                                    onClick = {
+                                        // Block tap during LONG_PRESS_FILE step - user must long-press
+                                        if (tutorialState.step == TutorialStep.LONG_PRESS_FILE) return@PdfFileItem
+                                        if (tutorialState.step == TutorialStep.OPEN_FILE) {
+                                            advanceTutorial(TutorialStep.TOOLBOX)
+                                        }
+                                        onOpen(file)
+                                    },
+                                    onLongClick = { onEditFile(file, false) },
+                                    s = s,
+                                    sizeScale = gridScale,
+                                    onPositioned = if (highlightImported) {
+                                        { rect -> onUpdateTutorialTarget(tutorialTargets.copy(importedCard = rect)) }
+                                    } else null
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryScreenTablet(
+    gridScale: Float,
+    effectiveSidebarWidth: androidx.compose.ui.unit.Dp,
+    isCompactSidebar: Boolean,
+    categories: List<File>,
+    selectedCategory: File?,
+    onSelectCategory: (File) -> Unit,
+    onEditFile: (File, Boolean) -> Unit,
+    s: AppStrings,
+    tutorialState: TutorialState,
+    advanceTutorial: (TutorialStep) -> Unit,
+    onShowNewCategoryDialog: () -> Unit,
+    onUpdateTutorialTarget: (LibraryTutorialTargets) -> Unit,
+    tutorialTargets: LibraryTutorialTargets,
+    onShowSettingsDialog: () -> Unit,
+    fabMenuExpanded: Boolean,
+    onFabMenuExpanded: (Boolean) -> Unit,
+    onImportPdf: () -> Unit,
+    onShowNewFolderDialog: () -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    sortOption: SortOption,
+    onSortOptionChange: (SortOption) -> Unit,
+    sortAsc: Boolean,
+    onSortAscChange: (Boolean) -> Unit,
+    globalResults: List<File>,
+    pdfs: List<File>,
+    folders: List<File>,
+    loading: Boolean,
+    searching: Boolean,
+    thumbs: Map<File, Bitmap?>,
+    columns: Int,
+    onOpen: (File) -> Unit,
+    notifyTutorialHint: (String) -> Unit,
+    tutorialsEnabled: Boolean
+) {
+    Row(Modifier.fillMaxSize()) {
+        // --- SIDEBAR ---
+        Surface(
+            tonalElevation = 1.dp,
+            modifier = Modifier.width(effectiveSidebarWidth).fillMaxHeight(),
+            color = MaterialTheme.colorScheme.surfaceContainerLow
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // App Title / Header
+                if (!isCompactSidebar) {
+                    Text(
+                        text = "PentagramApp",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(vertical = 24.dp, horizontal = 8.dp).align(Alignment.Start)
+                    )
+                } else {
+                    Spacer(Modifier.height(16.dp))
+                    Text("PDF", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(16.dp))
+                }
+
+                // Categories Header
+                if (!isCompactSidebar) {
+                    Text(
+                        text = s.categories.uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, bottom = 8.dp)
+                    )
+                }
+
+                // Categories List
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(count = categories.size) { index ->
+                        val cat = categories[index]
+                        val selected = cat == selectedCategory
+                        CategoryItem(
+                            name = cat.name,
+                            selected = selected,
+                            compact = isCompactSidebar,
+                            onClick = { onSelectCategory(cat) },
+                            onLongClick = { onEditFile(cat, true) }
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        if (isCompactSidebar) {
+                            IconButton(
+                                onClick = {
+                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
+                                        advanceTutorial(TutorialStep.FAB)
+                                    }
+                                    onShowNewCategoryDialog()
+                                },
+                                modifier = Modifier.onGloballyPositioned {
+                                    onUpdateTutorialTarget(tutorialTargets.copy(newCategory = it.boundsInRoot()))
+                                }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = s.newCategory)
+                            }
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    if (tutorialState.step == TutorialStep.NEW_CATEGORY) {
+                                        advanceTutorial(TutorialStep.FAB)
+                                    }
+                                    onShowNewCategoryDialog()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp)
+                                    .onGloballyPositioned {
+                                        onUpdateTutorialTarget(tutorialTargets.copy(newCategory = it.boundsInRoot()))
+                                    },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(s.newCategory)
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Settings Area
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+
+                if (isCompactSidebar) {
+                    IconButton(onClick = onShowSettingsDialog) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = s.themes,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                } else {
+                    TextButton(
+                        onClick = onShowSettingsDialog,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(s.settingsTitle, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+        }
+
+        // --- MAIN CONTENT ---
+        Scaffold(
+            modifier = Modifier.weight(1f),
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = {
+                        if (tutorialState.step == TutorialStep.FAB) {
+                            advanceTutorial(TutorialStep.IMPORT_PDF_MENU)
+                        }
+                        onFabMenuExpanded(true)
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.onGloballyPositioned {
+                        onUpdateTutorialTarget(tutorialTargets.copy(fab = it.boundsInRoot()))
+                    }
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+
+                    DropdownMenu(
+                        expanded = fabMenuExpanded,
+                        onDismissRequest = {
+                            if (tutorialState.step != TutorialStep.IMPORT_PDF_MENU) {
+                                onFabMenuExpanded(false)
+                            }
+                        }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(s.importPdf) },
+                            leadingIcon = { Icon(Icons.Default.UploadFile, null) },
+                            modifier = if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                                Modifier.background(MaterialTheme.colorScheme.primaryContainer)
+                            } else Modifier,
+                            onClick = {
+                                onFabMenuExpanded(false)
+                                onImportPdf()
+                                if (tutorialState.step == TutorialStep.IMPORT_PDF_MENU) {
+                                    advanceTutorial(TutorialStep.LONG_PRESS_FILE)
+                                }
+                            }
+                        )
+                        
+                        val createFolderEnabled = tutorialState.step != TutorialStep.IMPORT_PDF_MENU
+                        DropdownMenuItem(
+                            text = { Text(s.createFolder) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            enabled = createFolderEnabled,
+                            onClick = {
+                                onFabMenuExpanded(false)
+                                onShowNewFolderDialog()
+                            }
+                        )
+                    }
+                }
+            }
+        ) { padding ->
+            Column(Modifier.padding(padding).fillMaxSize()) {
+                // Top Bar / Search
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            placeholder = { Text(s.searchInLibrary) },
+                            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Search, contentDescription = null) },
+                            singleLine = true,
+                            colors = androidx.compose.material3.TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                            )
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        // Sort Button
+                        Box {
+                            var sortMenuExpanded by remember { mutableStateOf(false) }
+                            FilledTonalButton(onClick = { sortMenuExpanded = true }) {
+                                Icon(androidx.compose.material.icons.Icons.Default.Sort, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    when (sortOption) {
+                                        SortOption.BY_NAME -> s.sortByName
+                                        SortOption.BY_DATE -> s.sortByDate
+                                        SortOption.BY_SIZE -> s.sortBySize
+                                    }
+                                )
+                            }
+                            DropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) {
+                                DropdownMenuItem(text = { Text(s.sortByName) }, onClick = { onSortOptionChange(SortOption.BY_NAME); sortMenuExpanded = false })
+                                DropdownMenuItem(text = { Text(s.sortByDate) }, onClick = { onSortOptionChange(SortOption.BY_DATE); sortMenuExpanded = false })
+                                DropdownMenuItem(text = { Text(s.sortBySize) }, onClick = { onSortOptionChange(SortOption.BY_SIZE); sortMenuExpanded = false })
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text(if (sortAsc) "Ascending" else "Descending") },
+                                    trailingIcon = { Icon(if (sortAsc) androidx.compose.material.icons.Icons.Default.ArrowUpward else androidx.compose.material.icons.Icons.Default.ArrowDownward, null) },
+                                    onClick = { onSortAscChange(!sortAsc); sortMenuExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val context = LocalContext.current
+                val showFiles = if (query.isNotBlank()) globalResults else pdfs
+                val showFolders = if (query.isNotBlank()) emptyList<File>() else folders // Sorting is done in parent? No, parent applies sort.
+                // Wait, parent applies sort. I need to pass sorted lists or apply sort here.
+                // In original code: val showFiles = if (query.isNotBlank()) applySort(globalResults) else applySort(pdfs)
+                // I should pass the sorted lists or the raw lists and sort them here.
+                
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                        showFiles.isEmpty() && showFolders.isEmpty() -> {
+                            // Empty state
+                            EmptyLibraryView(
+                                modifier = Modifier.fillMaxSize().padding(32.dp),
+                                onScanDocuments = {
+                                    // Trigger document scan (implementation not shown here)
+                                    Toast.makeText(context, "Scanning documents...", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                        else -> {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(columns),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                            items(count = showFolders.size) { index ->
+                                val folder = showFolders[index]
+                                FolderItem(
+                                    file = folder,
+                                    onClick = { onOpen(folder) },
+                                    onLongClick = { onEditFile(folder, true) },
+                                    s = s,
+                                    sizeScale = gridScale
+                                )
+                            }
+                            items(count = showFiles.size) { index ->
+                                val file = showFiles[index]
+                                val highlightImported = tutorialsEnabled &&
+                                    tutorialState.step in setOf(
+                                        TutorialStep.LONG_PRESS_FILE,
+                                        TutorialStep.OPTIONS_MENU,
+                                        TutorialStep.RENAME_DIALOG,
+                                        TutorialStep.OPEN_FILE
+                                    ) &&
+                                    index == 0
+                                PdfFileItem(
+                                    file = file,
+                                    thumb = thumbs[file],
+                                    onClick = {
+                                        // Block tap during LONG_PRESS_FILE step - user must long-press
+                                        if (tutorialState.step == TutorialStep.LONG_PRESS_FILE) return@PdfFileItem
+                                        if (tutorialState.step == TutorialStep.OPEN_FILE) {
+                                            advanceTutorial(TutorialStep.TOOLBOX)
+                                        }
+                                        onOpen(file)
+                                    },
+                                    onLongClick = { onEditFile(file, false) },
+                                    s = s,
+                                    sizeScale = gridScale,
+                                    onPositioned = if (highlightImported) {
+                                        { rect -> onUpdateTutorialTarget(tutorialTargets.copy(importedCard = rect)) }
+                                    } else null
+                                )
+                            }
+                        }
+                    }
+                }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FolderItem(
+    file: File,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    s: AppStrings,
+    sizeScale: Float = 1f
+) {
+    val scale = sizeScale.coerceIn(0.5f, 1.5f)
+    val iconSize = 64.dp * scale
+    val spacing = 4.dp * scale
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Folder,
+            contentDescription = null,
+            modifier = Modifier.size(iconSize),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.height(spacing))
+        Text(
+            text = file.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PdfFileItem(
+    file: File,
+    thumb: Bitmap?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    s: AppStrings,
+    sizeScale: Float = 1f,
+    onPositioned: ((Rect) -> Unit)? = null
+) {
+    val scale = sizeScale.coerceIn(0.5f, 1.5f)
+    val cardWidth = 100.dp * scale
+    val cardHeight = 140.dp * scale
+    val iconSize = 32.dp * scale
+    val spacing = 4.dp * scale
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(8.dp)
+            .then(
+                if (onPositioned != null) {
+                    Modifier.onGloballyPositioned { coords -> onPositioned(coords.boundsInRoot()) }
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Card(
+            elevation = CardDefaults.cardElevation(4.dp),
+            modifier = Modifier.size(cardWidth, cardHeight)
+        ) {
+            if (thumb != null) {
+                Image(
+                    bitmap = thumb.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.PictureAsPdf,
+                        null,
+                        tint = androidx.compose.ui.graphics.Color.Gray,
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(spacing))
+        Text(
+            text = file.name,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+@Composable
+fun EmptyLibraryView(
+    modifier: Modifier = Modifier,
+    onScanDocuments: () -> Unit = {},
+    s: AppStrings? = null
+) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.LibraryBooks, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
+            Spacer(Modifier.height(16.dp))
+            if (s != null) {
+                Text(s.emptyList, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
+            }
+        }
+    }
+}
+

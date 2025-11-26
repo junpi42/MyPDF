@@ -136,6 +136,15 @@ interface AppStrings {
     val tutorialStart: String
     val tutorialSkip: String
     val tutorialExit: String
+    
+    // Eye Control (Wink to turn page)
+    val eyeControlEnable: String
+    val eyeControlDisable: String
+    val eyeControlNoFace: String
+    val eyeControlWinkDetected: String
+    val eyeControlWaitingOpen: String
+    val eyeControlPageChanged: String
+    val eyeControlHelp: String
 }
 
 object StringsEs : AppStrings {
@@ -257,6 +266,15 @@ object StringsEs : AppStrings {
     override val tutorialStart = "Empezar"
     override val tutorialSkip = "Omitir"
     override val tutorialExit = "Salir"
+    
+    // Eye Control
+    override val eyeControlEnable = "Activar control por guiño"
+    override val eyeControlDisable = "Desactivar control por guiño"
+    override val eyeControlNoFace = "No se detecta tu cara. Asegúrate de estar frente a la cámara."
+    override val eyeControlWinkDetected = "Guiño detectado, mantén cerrado..."
+    override val eyeControlWaitingOpen = "¡Mantén! Ahora abre ambos ojos..."
+    override val eyeControlPageChanged = "¡Página cambiada!"
+    override val eyeControlHelp = "Cierra un ojo 2 segundos y ábrelo para pasar página."
 }
 
 object StringsEn : AppStrings {
@@ -374,10 +392,19 @@ object StringsEn : AppStrings {
     override val tutorialExitConcertTitle = "Exit Concert Mode"
     override val tutorialExitConcertBody = "Tap the home button to return to editing."
     override val tutorialFinishedTitle = "Tutorial Finished"
-    override val tutorialFinishedBody = "You can reactivate it from settings."
+override val tutorialFinishedBody = "You can reactivate it from the settings."
     override val tutorialStart = "Start"
     override val tutorialSkip = "Skip"
     override val tutorialExit = "Exit"
+    
+    // Eye Control
+    override val eyeControlEnable = "Enable wink control"
+    override val eyeControlDisable = "Disable wink control"
+    override val eyeControlNoFace = "Face not detected. Make sure you are facing the camera."
+    override val eyeControlWinkDetected = "Wink detected, keep it closed..."
+    override val eyeControlWaitingOpen = "Hold! Now open both eyes..."
+    override val eyeControlPageChanged = "Page changed!"
+    override val eyeControlHelp = "Close one eye for 2 seconds and open it to turn the page."
 }
 
 object StringsFr : AppStrings {
@@ -499,6 +526,15 @@ object StringsFr : AppStrings {
     override val tutorialStart = "Commencer"
     override val tutorialSkip = "Passer"
     override val tutorialExit = "Quitter"
+    
+    // Eye Control
+    override val eyeControlEnable = "Activer le contrôle par clin d'oeil"
+    override val eyeControlDisable = "Désactiver le contrôle par clin d'oeil"
+    override val eyeControlNoFace = "Visage non détecté. Assurez-vous d'être face à la caméra."
+    override val eyeControlWinkDetected = "Clin d'oeil détecté, gardez-le fermé..."
+    override val eyeControlWaitingOpen = "Tenez! Maintenant ouvrez les deux yeux..."
+    override val eyeControlPageChanged = "Page changée!"
+    override val eyeControlHelp = "Fermez un oeil pendant 2 secondes et ouvrez-le pour tourner la page."
 }
 
 object StringsIt : AppStrings {
@@ -620,6 +656,15 @@ object StringsIt : AppStrings {
     override val tutorialStart = "Inizia"
     override val tutorialSkip = "Salta"
     override val tutorialExit = "Esci"
+    
+    // Eye Control
+    override val eyeControlEnable = "Attiva controllo con ammiccamento"
+    override val eyeControlDisable = "Disattiva controllo con ammiccamento"
+    override val eyeControlNoFace = "Volto non rilevato. Assicurati di essere di fronte alla fotocamera."
+    override val eyeControlWinkDetected = "Ammiccamento rilevato, tienilo chiuso..."
+    override val eyeControlWaitingOpen = "Tieni! Ora apri entrambi gli occhi..."
+    override val eyeControlPageChanged = "Pagina cambiata!"
+    override val eyeControlHelp = "Chiudi un occhio per 2 secondi e aprilo per girare pagina."
 }
 
 fun stringsFor(language: Language): AppStrings {

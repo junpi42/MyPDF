@@ -1,16 +1,22 @@
 package com.example.mypdf
 
+import android.view.MotionEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -20,6 +26,7 @@ import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -58,7 +65,8 @@ data class TutorialState(
 fun TutorialOverlay(
     state: TutorialState,
     onNext: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isTablet: Boolean = false
 ) {
     if (state.step == TutorialStep.NONE) return
 
@@ -131,6 +139,8 @@ fun TutorialOverlay(
         val showTapToContinue = !forceInteraction
 
         TutorialBlocker(
+            step = state.step,
+            isTablet = isTablet,
             targetRect = state.targetRect,
             onSkip = onDismiss,
             onNext = if (forceInteraction) {{}} else onNext,
@@ -142,8 +152,11 @@ fun TutorialOverlay(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TutorialBlocker(
+    step: TutorialStep,
+    isTablet: Boolean,
     targetRect: Rect?,
     onSkip: () -> Unit,
     onNext: () -> Unit = {},
@@ -155,30 +168,67 @@ fun TutorialBlocker(
     val density = LocalDensity.current
     val spotlightCorner = 20.dp
     val spacing = 16.dp
+    var rootOffset by remember { mutableStateOf(Offset.Zero) }
 
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .then(
-                if (showTapToContinue) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onNext
-                    )
-                } else {
-                    Modifier
+            .onGloballyPositioned { rootOffset = it.positionInRoot() }
+            .pointerInteropFilter { motionEvent ->
+                // For dialog steps where user needs to interact with AlertDialogs,
+                // don't block any touch events since AlertDialogs render in separate windows
+                val isDialogStep = step == TutorialStep.RENAME_DIALOG || 
+                                   step == TutorialStep.OPTIONS_MENU ||
+                                   step == TutorialStep.TUNER_MENU
+                if (isDialogStep) {
+                    return@pointerInteropFilter false
                 }
-            )
+                
+                val position = Offset(motionEvent.x, motionEvent.y)
+                
+                // Calculate anchor rect in current coordinates
+                val anchorRectLocal = if (targetRect != null && !targetRect.isEmpty) {
+                    targetRect.translate(-rootOffset.x, -rootOffset.y)
+                } else {
+                    null
+                }
+                
+                val isInsideSpotlight = anchorRectLocal?.contains(position) == true
+                
+                if (isInsideSpotlight) {
+                    // Inside spotlight: return false to let the event pass through
+                    false
+                } else {
+                    // Outside spotlight: consume the event
+                    if (showTapToContinue && motionEvent.action == MotionEvent.ACTION_UP) {
+                        onNext()
+                    }
+                    true
+                }
+            }
     ) {
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val screenHeightPx = with(density) { maxHeight.toPx() }
         val accent = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
 
+        val fallback = fallbackRectForStep(
+            step = step,
+            isTablet = isTablet,
+            screenWidthPx = screenWidthPx,
+            screenHeightPx = screenHeightPx,
+            density = density
+        )
+        
+        val anchorRect = if (targetRect != null && !targetRect.isEmpty) {
+            targetRect.translate(-rootOffset.x, -rootOffset.y)
+        } else {
+            fallback
+        }
+
         Canvas(Modifier.fillMaxSize()) {
             val overlay = Path().apply {
                 addRect(Rect(0f, 0f, size.width, size.height))
-                targetRect?.takeIf { !it.isEmpty }?.let { rect ->
+                anchorRect.takeIf { !it.isEmpty }?.let { rect ->
                     addRoundRect(
                         androidx.compose.ui.geometry.RoundRect(
                             left = rect.left,
@@ -192,7 +242,7 @@ fun TutorialBlocker(
                 fillType = PathFillType.EvenOdd
             }
             drawPath(path = overlay, color = Color.Black.copy(alpha = 0.75f), style = Fill)
-            targetRect?.takeIf { !it.isEmpty }?.let { rect ->
+            anchorRect.takeIf { !it.isEmpty }?.let { rect ->
                 val size = androidx.compose.ui.geometry.Size(rect.width, rect.height)
                 drawRoundRect(
                     color = accent.copy(alpha = 0.25f),
@@ -223,7 +273,7 @@ fun TutorialBlocker(
             }
         }
 
-        targetRect?.takeIf { !it.isEmpty }?.let { rect ->
+        anchorRect.takeIf { !it.isEmpty }?.let { rect ->
             StickyNote(
                 rect = rect,
                 message = message,
@@ -234,6 +284,66 @@ fun TutorialBlocker(
                 onNext = onNext,
                 showTapToContinue = showTapToContinue
             )
+        }
+    }
+}
+
+private fun fallbackRectForStep(
+    step: TutorialStep,
+    isTablet: Boolean,
+    screenWidthPx: Float,
+    screenHeightPx: Float,
+    density: androidx.compose.ui.unit.Density
+): Rect {
+    fun rectAt(
+        centerXFraction: Float,
+        centerYFraction: Float,
+        widthDp: Dp = 140.dp,
+        heightDp: Dp = 90.dp
+    ): Rect {
+        val widthPx = with(density) { widthDp.toPx() }
+        val heightPx = with(density) { heightDp.toPx() }
+        val cx = screenWidthPx * centerXFraction
+        val cy = screenHeightPx * centerYFraction
+        return Rect(
+            cx - widthPx / 2f,
+            cy - heightPx / 2f,
+            cx + widthPx / 2f,
+            cy + heightPx / 2f
+        )
+    }
+
+    return if (isTablet) {
+        when (step) {
+            TutorialStep.NEW_CATEGORY -> rectAt(0.12f, 0.18f, widthDp = 160.dp, heightDp = 72.dp) // sidebar
+            TutorialStep.FAB, TutorialStep.IMPORT_PDF_MENU -> rectAt(0.9f, 0.85f)
+            TutorialStep.LONG_PRESS_FILE,
+            TutorialStep.OPTIONS_MENU,
+            TutorialStep.RENAME_DIALOG,
+            TutorialStep.OPEN_FILE -> rectAt(0.62f, 0.55f)
+            TutorialStep.TOOLBOX -> rectAt(0.12f, 0.55f, widthDp = 120.dp, heightDp = 180.dp) // barra lateral de edición
+            TutorialStep.TUNER_BUTTON -> rectAt(0.88f, 0.12f, widthDp = 140.dp, heightDp = 72.dp)
+            TutorialStep.TUNER_ACTIVE,
+            TutorialStep.TUNER_MENU -> rectAt(0.62f, 0.25f, widthDp = 220.dp, heightDp = 96.dp)
+            TutorialStep.CONCERT_MODE,
+            TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f, widthDp = 140.dp, heightDp = 72.dp)
+            else -> rectAt(0.6f, 0.5f)
+        }
+    } else {
+        when (step) {
+            TutorialStep.NEW_CATEGORY -> rectAt(0.18f, 0.18f)
+            TutorialStep.FAB, TutorialStep.IMPORT_PDF_MENU -> rectAt(0.86f, 0.82f)
+            TutorialStep.LONG_PRESS_FILE,
+            TutorialStep.OPTIONS_MENU,
+            TutorialStep.RENAME_DIALOG,
+            TutorialStep.OPEN_FILE -> rectAt(0.5f, 0.55f)
+            TutorialStep.TOOLBOX -> rectAt(0.5f, 0.88f)
+            TutorialStep.TUNER_BUTTON -> rectAt(0.9f, 0.12f, widthDp = 120.dp, heightDp = 72.dp)
+            TutorialStep.TUNER_ACTIVE,
+            TutorialStep.TUNER_MENU -> rectAt(0.5f, 0.25f)
+            TutorialStep.CONCERT_MODE,
+            TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f)
+            else -> rectAt(0.5f, 0.5f)
         }
     }
 }
@@ -255,16 +365,67 @@ private fun BoxWithConstraintsScope.StickyNote(
     val measuredWidthPx = if (noteSize.width > 0) noteSize.width.toFloat() else with(density) { 240.dp.toPx() }
     val measuredHeightPx = if (noteSize.height > 0) noteSize.height.toFloat() else with(density) { 140.dp.toPx() }
 
-    val preferRight = rect.right + spacingPx + measuredWidthPx <= screenWidthPx
-    val preferAbove = rect.top - spacingPx - measuredHeightPx >= 0f
+    // Calculate available space
+    val spaceTop = rect.top - spacingPx
+    val spaceBottom = screenHeightPx - rect.bottom - spacingPx
+    val spaceLeft = rect.left - spacingPx
+    val spaceRight = screenWidthPx - rect.right - spacingPx
 
-    var offsetXPx = if (preferRight) rect.right + spacingPx else rect.left - spacingPx - measuredWidthPx
-    var offsetYPx = if (preferAbove) rect.top - spacingPx - measuredHeightPx else rect.bottom + spacingPx
+    // Determine best position
+    // Priority: Top, Bottom, Left, Right
+    // For vertical placement, try to center horizontally.
+    // For horizontal placement, try to center vertically.
 
-    offsetXPx = offsetXPx.coerceIn(0f, screenWidthPx - measuredWidthPx)
-    offsetYPx = offsetYPx.coerceIn(0f, screenHeightPx - measuredHeightPx)
+    var finalX = 0f
+    var finalY = 0f
 
-    val offset = IntOffset(offsetXPx.roundToInt(), offsetYPx.roundToInt())
+    val candidates = mutableListOf<Pair<String, Pair<Float, Float>>>()
+    if (spaceTop >= measuredHeightPx) {
+        val cx = rect.left + rect.width / 2f - measuredWidthPx / 2f
+        val cy = rect.top - spacingPx - measuredHeightPx
+        candidates += "top" to (cx to cy)
+    }
+    if (spaceBottom >= measuredHeightPx) {
+        val cx = rect.left + rect.width / 2f - measuredWidthPx / 2f
+        val cy = rect.bottom + spacingPx
+        candidates += "bottom" to (cx to cy)
+    }
+    if (spaceLeft >= measuredWidthPx) {
+        val cx = rect.left - spacingPx - measuredWidthPx
+        val cy = rect.top + rect.height / 2f - measuredHeightPx / 2f
+        candidates += "left" to (cx to cy)
+    }
+    if (spaceRight >= measuredWidthPx) {
+        val cx = rect.right + spacingPx
+        val cy = rect.top + rect.height / 2f - measuredHeightPx / 2f
+        candidates += "right" to (cx to cy)
+    }
+
+    val best = candidates.maxByOrNull { (dir, _) ->
+        when (dir) {
+            "top" -> spaceTop * rect.width
+            "bottom" -> spaceBottom * rect.width
+            "left" -> spaceLeft * rect.height
+            "right" -> spaceRight * rect.height
+            else -> 0f
+        }
+    }
+
+    if (best != null) {
+        finalX = best.second.first
+        finalY = best.second.second
+    } else {
+        // Fallback: center near the rect
+        finalX = rect.left + rect.width / 2f - measuredWidthPx / 2f
+        finalY = rect.top + rect.height / 2f - measuredHeightPx / 2f
+    }
+
+    // Clamp to screen bounds with some padding
+    val padding = spacingPx
+    finalX = finalX.coerceIn(padding, screenWidthPx - measuredWidthPx - padding)
+    finalY = finalY.coerceIn(padding, screenHeightPx - measuredHeightPx - padding)
+
+    val offset = IntOffset(finalX.roundToInt(), finalY.roundToInt())
 
     // Standard positioning for all steps
     val baseModifier = Modifier

@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
 
     // --- INTERFAZ DE USUARIO (COMPOSE) ---
     implementation(platform(libs.androidx.compose.bom))
@@ -66,6 +67,13 @@ dependencies {
     // --- LIBRERÍAS DE TERCEROS ---
     implementation(libs.kotlinx.coroutines.android)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // --- CAMERAX Y ML KIT PARA DETECCIÓN DE OJOS ---
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    implementation("com.google.mlkit:face-detection:16.1.6")
 
     // --- DEPENDENCIAS DE TEST ---
     testImplementation(libs.junit)
