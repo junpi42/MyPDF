@@ -1,5 +1,6 @@
 package com.example.mypdf
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,7 +43,9 @@ fun StyledTopBar(
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val isTablet = config.screenWidthDp > 600
+    val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
     val height = if (isTablet) 80.dp else 64.dp
+    val horizontalPadding = if (isTablet && isLandscape) 0.dp else 8.dp
     
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -50,7 +53,7 @@ fun StyledTopBar(
         shadowElevation = 4.dp
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End
         ) {
