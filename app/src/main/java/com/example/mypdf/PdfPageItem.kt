@@ -47,8 +47,8 @@ fun PdfPageItem(
     darkMode: Boolean
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
-    var canvasW by remember { mutableStateOf(0f) }
-    var canvasH by remember { mutableStateOf(0f) }
+    var canvasW by remember { mutableFloatStateOf(0f) }
+    var canvasH by remember { mutableFloatStateOf(0f) }
 
     var eraserCenter by remember { mutableStateOf<Offset?>(null) }
 

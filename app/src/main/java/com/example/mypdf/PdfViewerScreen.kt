@@ -1,6 +1,7 @@
 package com.example.mypdf
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -13,6 +14,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -31,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -40,6 +43,7 @@ import androidx.compose.animation.*
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -75,7 +79,9 @@ private data class ViewerTutorialTargets(
     val winkButton: Rect? = null
 )
 
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Suppress("ComposeBoxWithConstraintsScopeUnused")
 @Composable
 fun PdfViewerScreen(
     deviceType: DeviceType,
@@ -321,7 +327,7 @@ fun PdfViewerScreen(
         File(file.parentFile, file.nameWithoutExtension + ".ann.json")
     }
     var saveJob by remember { mutableStateOf<Job?>(null) }
-    // Stack de undo: hasta 5 snapshots
+    // Stack de undo: hasta 7 snapshots
     val undoStack = remember { mutableStateListOf<Map<Int, PageAnnotations>>() }
 
     val scheduleSave: () -> Unit = {
@@ -370,8 +376,8 @@ fun PdfViewerScreen(
         // Evitar duplicados consecutivos
         if (undoStack.isNotEmpty() && undoStack.last() == snap) return
         undoStack.add(snap)
-        // Mantener máximo 5
-        while (undoStack.size > 5) undoStack.removeAt(0)
+        // Mantener máximo 7
+        while (undoStack.size > 7) undoStack.removeAt(0)
     }
 
     fun undo(): Boolean {
@@ -435,7 +441,7 @@ fun PdfViewerScreen(
     val screenBg = MaterialTheme.colorScheme.background
 
     Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize()) {
             // Lambdas locales necesarias para la top bar (están en el scope de PdfViewerScreen)
             val onTunerClickLocal: () -> Unit = {
                 if (!tunerOn) {
@@ -484,7 +490,7 @@ fun PdfViewerScreen(
 
             if (concertModeOn) {
                 // ===== MODO CONCIERTO: PDF a pantalla completa con zoom/pan =====
-                
+
                 // Función para pasar a la siguiente página
                 fun goToNextPage() {
                     val currentIndex = listState.firstVisibleItemIndex
@@ -494,7 +500,7 @@ fun PdfViewerScreen(
                         }
                     }
                 }
-                
+
                 // Estado del eye control
                 val eyeControlState = rememberEyeControlState(
                     enabled = eyeControlEnabled,
@@ -589,7 +595,7 @@ fun PdfViewerScreen(
                 } else {
                     1f
                 }
-                
+
                 val backColor = if (highlightBack) {
                     val infiniteTransition = rememberInfiniteTransition(label = "backPulseColor")
                     infiniteTransition.animateColor(
@@ -604,7 +610,7 @@ fun PdfViewerScreen(
                 } else {
                     if (darkMode) Color.White else Color(0xFF111111)
                 }
-                
+
                 // Color del botón de casa sincronizado con el ojo
                 val homeIconColor by animateColorAsState(
                     targetValue = if (highlightBack) {
@@ -644,10 +650,10 @@ fun PdfViewerScreen(
                         tint = homeIconColor
                     )
                 }
-                
+
                 // ===== EYE CONTROL (Control por guiño) =====
                 // (Funciones y estado movidos arriba)
-                
+
                 // Ocultar ayuda después de 5 segundos
                 LaunchedEffect(showEyeControlHelp) {
                     if (showEyeControlHelp) {
@@ -655,7 +661,7 @@ fun PdfViewerScreen(
                         showEyeControlHelp = false
                     }
                 }
-                
+
                 // Botón de eye control en la esquina superior derecha
                 EyeControlButton(
                     eyeControlEnabled = eyeControlEnabled,
@@ -686,7 +692,7 @@ fun PdfViewerScreen(
                              tutorialTargets = tutorialTargets.copy(winkButton = coordinates.boundsInRoot())
                         }
                 )
-                
+
                 // Diálogo de menú de calibración
                 EyeCalibrationDialog(
                     visible = showCalibrationMenu,
@@ -702,7 +708,7 @@ fun PdfViewerScreen(
                     },
                     isCalibrated = isCalibrated
                 )
-                
+
                 // Flujo de calibración
                 EyeCalibrationFlow(
                     visible = calibrationStep != CalibrationStep.MENU,
@@ -714,7 +720,7 @@ fun PdfViewerScreen(
                         calibrationStep = CalibrationStep.MENU
                     }
                 )
-                
+
                 // Tarjeta de ayuda/estado (parte superior central)
                 if (eyeControlEnabled) {
                     EyeControlHelpCard(
@@ -728,8 +734,9 @@ fun PdfViewerScreen(
                 }
             } else {
                 // ===== MODO EDICIÓN ORIGINAL =====
-                val width = with(density) { maxWidth.toPx() }
-                val height = with(density) { maxHeight.toPx() }
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val width = with(density) { maxWidth.toPx() }
+                    val height = with(density) { maxHeight.toPx() }
 
                 if (deviceType == DeviceType.PHONE) {
                     PdfEditModePhone(
@@ -835,10 +842,12 @@ fun PdfViewerScreen(
                             }
                         },
                         onShowTunerSettings = { showTunerSettings = true },
-                        onUndo = { undo() }
+                        onUndo = { undo() },
+                        hasUndo = undoStack.isNotEmpty()
                     )
                 } else {
                     PdfEditModeTablet(
+                        undoStack = undoStack,
                         listState = listState,
                         isPinching = isPinching,
                         scale = scale,
@@ -944,85 +953,87 @@ fun PdfViewerScreen(
                     )
                 }
             }
-
-                // Tutorial Logic
-                LaunchedEffect(tunerOn) {
-                    if (tunerOn && tutorialState.step == TutorialStep.TUNER_BUTTON) {
-                        advanceTutorial(TutorialStep.TUNER_ACTIVE)
-                    }
-                }
-                
-                LaunchedEffect(showTunerSettings) {
-                    if (showTunerSettings && tutorialState.step == TutorialStep.TUNER_ACTIVE) {
-                        advanceTutorial(TutorialStep.TUNER_MENU)
-                    } else if (!showTunerSettings && tutorialState.step == TutorialStep.TUNER_MENU) {
-                         advanceTutorial(TutorialStep.CONCERT_MODE)
-                    }
-                }
-                
-                LaunchedEffect(concertModeOn) {
-                    if (concertModeOn && tutorialState.step == TutorialStep.CONCERT_MODE) {
-                        advanceTutorial(TutorialStep.WINK_DETECTOR)
-                    }
-                }
-                
-                LaunchedEffect(eyeControlEnabled) {
-                    if (eyeControlEnabled && tutorialState.step == TutorialStep.WINK_DETECTOR) {
-                        advanceTutorial(TutorialStep.WINK_CALIBRATION)
-                    }
-                }
-                
-                LaunchedEffect(showCalibrationMenu) {
-                    if (!showCalibrationMenu && tutorialState.step == TutorialStep.WINK_CALIBRATION) {
-                        advanceTutorial(TutorialStep.EXIT_CONCERT)
-                    }
-                }
-
-                TutorialOverlay(
-                    state = tutorialState,
-                    isTablet = deviceType != DeviceType.PHONE,
-                    onNext = {
-                        when (tutorialState.step) {
-                            TutorialStep.TOOLBOX -> advanceTutorial(TutorialStep.TUNER_BUTTON)
-                            TutorialStep.TUNER_BUTTON -> {
-                                advanceTutorial(TutorialStep.TUNER_ACTIVE)
-                                if (!tunerOn) ensureMicPermission { tunerOn = true }
-                            }
-                            TutorialStep.TUNER_ACTIVE -> {
-                                 advanceTutorial(TutorialStep.TUNER_MENU)
-                                 showTunerSettings = true
-                            }
-                            TutorialStep.TUNER_MENU -> {
-                                showTunerSettings = false
-                                advanceTutorial(TutorialStep.CONCERT_MODE)
-                            }
-                            TutorialStep.CONCERT_MODE -> {
-                                // En este paso el usuario debe pulsar el botón de concierto real.
-                                // El avance a WINK_DETECTOR se hace en LaunchedEffect(concertModeOn).
-                            }
-                            TutorialStep.WINK_DETECTOR -> {
-                                // El usuario debe pulsar el ojo.
-                            }
-                            TutorialStep.WINK_CALIBRATION -> {
-                                // El usuario debe mantener pulsado.
-                            }
-                            TutorialStep.EXIT_CONCERT -> {
-                                // El usuario debe pulsar el botón de casa (back) para salir del modo concierto.
-                            }
-                            TutorialStep.FINISHED -> {
-                                onTutorialComplete()
-                            }
-                            else -> {}
-                        }
-                    },
-                    onDismiss = onTutorialComplete
-                )
         }
+
+        // Tutorial Logic
+        LaunchedEffect(tunerOn) {
+            if (tunerOn && tutorialState.step == TutorialStep.TUNER_BUTTON) {
+                advanceTutorial(TutorialStep.TUNER_ACTIVE)
+            }
+        }
+
+        LaunchedEffect(showTunerSettings) {
+            if (showTunerSettings && tutorialState.step == TutorialStep.TUNER_ACTIVE) {
+                advanceTutorial(TutorialStep.TUNER_MENU)
+            } else if (!showTunerSettings && tutorialState.step == TutorialStep.TUNER_MENU) {
+                 advanceTutorial(TutorialStep.CONCERT_MODE)
+            }
+        }
+
+        LaunchedEffect(concertModeOn) {
+            if (concertModeOn && tutorialState.step == TutorialStep.CONCERT_MODE) {
+                advanceTutorial(TutorialStep.WINK_DETECTOR)
+            }
+        }
+
+        LaunchedEffect(eyeControlEnabled) {
+            if (eyeControlEnabled && tutorialState.step == TutorialStep.WINK_DETECTOR) {
+                advanceTutorial(TutorialStep.WINK_CALIBRATION)
+            }
+        }
+
+        LaunchedEffect(showCalibrationMenu) {
+            if (!showCalibrationMenu && tutorialState.step == TutorialStep.WINK_CALIBRATION) {
+                advanceTutorial(TutorialStep.EXIT_CONCERT)
+            }
+        }
+
+        TutorialOverlay(
+            state = tutorialState,
+            isTablet = deviceType != DeviceType.PHONE,
+            onNext = {
+                when (tutorialState.step) {
+                    TutorialStep.TOOLBOX -> advanceTutorial(TutorialStep.TUNER_BUTTON)
+                    TutorialStep.TUNER_BUTTON -> {
+                        advanceTutorial(TutorialStep.TUNER_ACTIVE)
+                        if (!tunerOn) ensureMicPermission { tunerOn = true }
+                    }
+                    TutorialStep.TUNER_ACTIVE -> {
+                         advanceTutorial(TutorialStep.TUNER_MENU)
+                         showTunerSettings = true
+                    }
+                    TutorialStep.TUNER_MENU -> {
+                        showTunerSettings = false
+                        advanceTutorial(TutorialStep.CONCERT_MODE)
+                    }
+                    TutorialStep.CONCERT_MODE -> {
+                        // En este paso el usuario debe pulsar el botón de concierto real.
+                        // El avance a WINK_DETECTOR se hace en LaunchedEffect(concertModeOn).
+                    }
+                    TutorialStep.WINK_DETECTOR -> {
+                        // El usuario debe pulsar el ojo.
+                    }
+                    TutorialStep.WINK_CALIBRATION -> {
+                        // El usuario debe mantener pulsado.
+                    }
+                    TutorialStep.EXIT_CONCERT -> {
+                        // El usuario debe pulsar el botón de casa (back) para salir del modo concierto.
+                    }
+                    TutorialStep.FINISHED -> {
+                        onTutorialComplete()
+                    }
+                    else -> {}
+                }
+            },
+            onDismiss = onTutorialComplete
+        )
     }
+}
 }
 
 @Composable
 private fun PdfEditModeTablet(
+    undoStack: List<Map<Int, PageAnnotations>>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     isPinching: Boolean,
     scale: Float,
@@ -1068,6 +1079,25 @@ private fun PdfEditModeTablet(
     onUndo: () -> Unit
 ) {
     val topBarHeight = 64.dp
+    val config = LocalConfiguration.current
+    val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
+    val isLandscape = !isPortrait
+    val density = LocalDensity.current
+    
+    // Estado para el panel de ajustes del lápiz/highlighter
+    var showPencilSettingsPanel by remember { mutableStateOf(false) }
+    var settingsPanelToolType by remember { mutableStateOf("marker") }
+    
+    // Posición de la barra de herramientas para posicionar el panel
+    var toolboxBounds by remember { mutableStateOf<Rect?>(null) }
+    
+    // Cerrar el panel cuando se cambia de herramienta (excepto marker/highlighter)
+    LaunchedEffect(selectedTool) {
+        if (selectedTool != "marker" && selectedTool != "highlighter") {
+            showPencilSettingsPanel = false
+        }
+    }
+    
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1121,9 +1151,6 @@ private fun PdfEditModeTablet(
         }
 
         // Barra lateral de herramientas sólo en modo edición
-        val config = LocalConfiguration.current
-        val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
-        
         Box(
             modifier = Modifier
                 .fillMaxHeight(if (isPortrait) 0.75f else 1f)
@@ -1140,16 +1167,95 @@ private fun PdfEditModeTablet(
                     else -> 0f
                 },
                 smoothingEnabled = smoothingEnabled,
-                onSelectTool = onSelectTool,
+                onSelectTool = { tool ->
+                    // Si se selecciona otra herramienta, cerrar el panel
+                    if (tool != "marker" && tool != "highlighter") {
+                        showPencilSettingsPanel = false
+                    }
+                    onSelectTool(tool)
+                },
                 onPaletteSlotClicked = onPaletteSlotClicked,
                 onStrokeChange = onStrokeChange,
                 onToggleSmoothing = onToggleSmoothing,
                 darkMode = darkMode,
                 language = language,
-                onToolboxPositioned = { rect -> onUpdateTutorialTarget { it.copy(toolbox = rect) } },
+                onToolboxPositioned = { rect -> 
+                    toolboxBounds = rect
+                    onUpdateTutorialTarget { it.copy(toolbox = rect) } 
+                },
                 hasUndo = undoStack.isNotEmpty(),
-                onUndo = onUndo
-             )
+                onUndo = onUndo,
+                onMarkerLongPress = {
+                    settingsPanelToolType = "marker"
+                    showPencilSettingsPanel = true
+                },
+                onHighlighterLongPress = {
+                    settingsPanelToolType = "highlighter"
+                    showPencilSettingsPanel = true
+                },
+                showSlider = isPortrait // En landscape no mostramos el slider integrado
+            )
+        }
+        
+        // Scrim transparente para cerrar el panel al tocar fuera
+        if (showPencilSettingsPanel) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        showPencilSettingsPanel = false
+                    }
+            )
+        }
+        
+        // Panel flotante de ajustes del lápiz/highlighter
+        toolboxBounds?.let { bounds ->
+            val panelOffsetX = with(density) { bounds.right.toDp() + 8.dp }
+            val panelOffsetY = with(density) { 
+                // Centrar verticalmente respecto a la barra
+                ((bounds.top + bounds.bottom) / 2).toDp() - 150.dp
+            }.coerceAtLeast(16.dp)
+            
+            val currentStrokeWidth = when (settingsPanelToolType) {
+                "marker" -> markerStrokeWidth
+                "highlighter" -> highlighterStrokeWidth
+                else -> markerStrokeWidth
+            }
+            
+            val (minStroke, maxStroke) = when (settingsPanelToolType) {
+                "marker" -> 0.003f to 0.02f
+                "highlighter" -> 0.01f to 0.08f
+                else -> 0.003f to 0.02f
+            }
+            
+            Box(
+                modifier = Modifier
+                    .offset(x = panelOffsetX, y = panelOffsetY)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        // Consumir el click para que no cierre el panel
+                    }
+            ) {
+                PencilSettingsPanel(
+                    visible = showPencilSettingsPanel,
+                    toolType = settingsPanelToolType,
+                    paletteColors = paletteColors,
+                    selectedColorIndex = selectedPaletteIndex,
+                    strokeWidth = currentStrokeWidth,
+                    minStrokeWidth = minStroke,
+                    maxStrokeWidth = maxStroke,
+                    onColorSelected = { index ->
+                        onPaletteSlotClicked(index)
+                    },
+                    onStrokeWidthChanged = onStrokeChange,
+                    onDismiss = { showPencilSettingsPanel = false }
+                )
+            }
         }
 
         if (showColorPicker) {
@@ -1159,7 +1265,7 @@ private fun PdfEditModeTablet(
                 onDismiss = onDismissColorPicker
             )
         }
-        
+
         if (showTunerSettings) {
             TunerSettingsDialog(
                 tuner = tunner,
@@ -1217,7 +1323,8 @@ private fun PdfEditModePhone(
     onDismissTunerSettings: () -> Unit,
     onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
     onShowTunerSettings: () -> Unit,
-    onUndo: () -> Unit
+    onUndo: () -> Unit,
+    hasUndo: Boolean
 ) {
     val topBarHeight = 64.dp
     Scaffold(
@@ -1241,7 +1348,13 @@ private fun PdfEditModePhone(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(44.dp)
-                                .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
+                                .onGloballyPositioned { coords ->
+                                    onUpdateTutorialTarget {
+                                        it.copy(
+                                            tunerDisplay = coords.boundsInRoot()
+                                        )
+                                    }
+                                },
                             onClick = onShowTunerSettings
                         )
                     }
@@ -1276,16 +1389,19 @@ private fun PdfEditModePhone(
                         tint = if (selectedTool == "eraser") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                
+
                 Spacer(Modifier.weight(1f))
-                
+
                 // Palette
                 paletteColors.forEachIndexed { index, color ->
                     Box(
                         modifier = Modifier
                             .size(32.dp)
                             .padding(4.dp)
-                            .background(color = color, shape = androidx.compose.foundation.shape.CircleShape)
+                            .background(
+                                color = color,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
                             .clickable { onPaletteSlotClicked(index) }
                     )
                 }
@@ -1296,187 +1412,200 @@ private fun PdfEditModePhone(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .then(
-                    if (selectedTool == "none") {
-                        Modifier.pointerInput(selectedTool) {
-                            detectTransformGestures { centroid, pan, zoom, _ ->
-                                onTransform(zoom, centroid, pan.x, pan.y)
-                            }
-                        }
-                    } else Modifier
-                )
         ) {
-            LazyColumn(
-                state = listState,
-                userScrollEnabled = !isPinching,
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY
-                    ),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(count = pageCount) { index ->
-                    val bmp = pageBitmaps.getOrNull(index)
-                    PdfPageItem(
-                        index = index,
-                        bitmap = bmp,
-                        showLoadingLabel = bmp == null,
-                        editMode = true,
-                        annotations = annotations[index] ?: PageAnnotations(index),
-                        selectedTool = selectedTool,
-                        currentColor = currentColor,
-                        currentStrokeWidth = when (selectedTool) {
-                            "marker" -> markerStrokeWidth
-                            "highlighter" -> highlighterStrokeWidth
-                            else -> markerStrokeWidth
-                        },
-                        eraserRadiusNorm = eraserRadiusNorm,
-                        smoothingEnabled = smoothingEnabled,
-                        onPathAdded = { path -> onPathAdded(index, path) },
-                        onErase = { offsets -> onErase(index, offsets) },
-                        darkMode = darkMode
+                    .then(
+                        if (selectedTool == "none") {
+                            Modifier.pointerInput(selectedTool) {
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    onTransform(zoom, centroid, pan.x, pan.y)
+                                }
+                            }
+                        } else Modifier
                     )
-                    Spacer(Modifier.height(12.dp))
+            ) {
+                LazyColumn(
+                    state = listState,
+                    userScrollEnabled = !isPinching,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        ),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(count = pageCount) { index ->
+                        val bmp = pageBitmaps.getOrNull(index)
+                        PdfPageItem(
+                            index = index,
+                            bitmap = bmp,
+                            showLoadingLabel = bmp == null,
+                            editMode = true,
+                            annotations = annotations[index] ?: PageAnnotations(index),
+                            selectedTool = selectedTool,
+                            currentColor = currentColor,
+                            currentStrokeWidth = when (selectedTool) {
+                                "marker" -> markerStrokeWidth
+                                "highlighter" -> highlighterStrokeWidth
+                                else -> markerStrokeWidth
+                            },
+                            eraserRadiusNorm = eraserRadiusNorm,
+                            smoothingEnabled = smoothingEnabled,
+                            onPathAdded = { path -> onPathAdded(index, path) },
+                            onErase = { offsets -> onErase(index, offsets) },
+                            darkMode = darkMode
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
                 }
-            }
-            
-            if (showColorPicker) {
-                ColorPickerDialog(
-                    currentColor = currentColor,
-                    onColorSelected = onColorSelected,
-                    onDismiss = onDismissColorPicker
-                )
-            }
-            
-            if (showTunerSettings) {
-                TunerSettingsDialog(
-                    tuner = tunner,
-                    isDaltonic = isDaltonic,
-                    onToggleDaltonic = onToggleDaltonic,
-                    extendedMode = tunerExtendedMode,
-                    onToggleExtendedMode = onToggleExtendedMode,
-                    onDismiss = onDismissTunerSettings
-                )
+
+                if (showColorPicker) {
+                    ColorPickerDialog(
+                        currentColor = currentColor,
+                        onColorSelected = onColorSelected,
+                        onDismiss = onDismissColorPicker
+                    )
+                }
+
+                if (showTunerSettings) {
+                    TunerSettingsDialog(
+                        tuner = tunner,
+                        isDaltonic = isDaltonic,
+                        onToggleDaltonic = onToggleDaltonic,
+                        extendedMode = tunerExtendedMode,
+                        onToggleExtendedMode = onToggleExtendedMode,
+                        onDismiss = onDismissTunerSettings
+                    )
+                }
             }
         }
     }
-}
 
-private fun distancePointToSegment(
-    p: androidx.compose.ui.geometry.Offset,
-    a: androidx.compose.ui.geometry.Offset,
-    b: androidx.compose.ui.geometry.Offset
-): Float {
-    val ax = a.x; val ay = a.y; val bx = b.x; val by = b.y
-    val vx = bx - ax; val vy = by - ay
-    val wx = p.x - ax; val wy = p.y - ay
-    val vv = vx * vx + vy * vy
-    val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
-    val nx = ax + t * vx
-    val ny = ay + t * vy
-    val dx = p.x - nx
-    val dy = p.y - ny
-    return kotlin.math.sqrt(dx * dx + dy * dy)
-}
+    }
 
-private fun performErase(
-    page: PageAnnotations,
-    eraserPoints: List<androidx.compose.ui.geometry.Offset>,
-    threshold: Float
-): Boolean {
-    val resultPaths = mutableListOf<DrawingPath>()
-    var changed = false
+    private fun distancePointToSegment(
+        p: androidx.compose.ui.geometry.Offset,
+        a: androidx.compose.ui.geometry.Offset,
+        b: androidx.compose.ui.geometry.Offset
+    ): Float {
+        val ax = a.x;
+        val ay = a.y;
+        val bx = b.x;
+        val by = b.y
+        val vx = bx - ax;
+        val vy = by - ay
+        val wx = p.x - ax;
+        val wy = p.y - ay
+        val vv = vx * vx + vy * vy
+        val t = if (vv > 0f) ((wx * vx + wy * vy) / vv).coerceIn(0f, 1f) else 0f
+        val nx = ax + t * vx
+        val ny = ay + t * vy
+        val dx = p.x - nx
+        val dy = p.y - ny
+        return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
 
-    page.paths.forEach { p ->
-        val pts = p.points
-        if (pts.isEmpty()) {
-            resultPaths.add(p)
-            return@forEach
-        }
+    private fun performErase(
+        page: PageAnnotations,
+        eraserPoints: List<androidx.compose.ui.geometry.Offset>,
+        threshold: Float
+    ): Boolean {
+        val resultPaths = mutableListOf<DrawingPath>()
+        var changed = false
 
-        // Optimization: Check bounding box first
-        var minX = Float.MAX_VALUE; var maxX = Float.MIN_VALUE
-        var minY = Float.MAX_VALUE; var maxY = Float.MIN_VALUE
-        pts.forEach { pt ->
-            if (pt.x < minX) minX = pt.x
-            if (pt.x > maxX) maxX = pt.x
-            if (pt.y < minY) minY = pt.y
-            if (pt.y > maxY) maxY = pt.y
-        }
-        // Expand bounds by threshold
-        minX -= threshold; maxX += threshold
-        minY -= threshold; maxY += threshold
-
-        val inBounds = eraserPoints.any { e ->
-            e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY
-        }
-        if (!inBounds) {
-            resultPaths.add(p)
-            return@forEach
-        }
-
-        val splitParts = mutableListOf<DrawingPath>()
-        val currentSegmentPoints = mutableListOf<androidx.compose.ui.geometry.Offset>()
-        var pathWasHit = false
-
-        for (i in pts.indices) {
-            val point = pts[i]
-            // Check if point is hit
-            val isPointHit = eraserPoints.any { e ->
-                val dx = e.x - point.x
-                val dy = e.y - point.y
-                (dx * dx + dy * dy) <= (threshold * threshold)
+        page.paths.forEach { p ->
+            val pts = p.points
+            if (pts.isEmpty()) {
+                resultPaths.add(p)
+                return@forEach
             }
 
-            if (isPointHit) {
-                pathWasHit = true
-                if (currentSegmentPoints.isNotEmpty()) {
-                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
-                    currentSegmentPoints.clear()
-                }
-                continue
+            // Optimization: Check bounding box first
+            var minX = Float.MAX_VALUE;
+            var maxX = Float.MIN_VALUE
+            var minY = Float.MAX_VALUE;
+            var maxY = Float.MIN_VALUE
+            pts.forEach { pt ->
+                if (pt.x < minX) minX = pt.x
+                if (pt.x > maxX) maxX = pt.x
+                if (pt.y < minY) minY = pt.y
+                if (pt.y > maxY) maxY = pt.y
+            }
+            // Expand bounds by threshold
+            minX -= threshold; maxX += threshold
+            minY -= threshold; maxY += threshold
+
+            val inBounds = eraserPoints.any { e ->
+                e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY
+            }
+            if (!inBounds) {
+                resultPaths.add(p)
+                return@forEach
             }
 
-            // Point is valid
-            if (currentSegmentPoints.isEmpty()) {
-                currentSegmentPoints.add(point)
-            } else {
-                val prev = currentSegmentPoints.last()
-                // Check segment prev-point
-                val isSegmentHit = eraserPoints.any { e ->
-                    distancePointToSegment(e, prev, point) <= threshold
+            val splitParts = mutableListOf<DrawingPath>()
+            val currentSegmentPoints = mutableListOf<androidx.compose.ui.geometry.Offset>()
+            var pathWasHit = false
+
+            for (i in pts.indices) {
+                val point = pts[i]
+                // Check if point is hit
+                val isPointHit = eraserPoints.any { e ->
+                    val dx = e.x - point.x
+                    val dy = e.y - point.y
+                    (dx * dx + dy * dy) <= (threshold * threshold)
                 }
 
-                if (isSegmentHit) {
+                if (isPointHit) {
                     pathWasHit = true
-                    splitParts.add(p.copy(points = currentSegmentPoints.toList()))
-                    currentSegmentPoints.clear()
+                    if (currentSegmentPoints.isNotEmpty()) {
+                        splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                        currentSegmentPoints.clear()
+                    }
+                    continue
+                }
+
+                // Point is valid
+                if (currentSegmentPoints.isEmpty()) {
                     currentSegmentPoints.add(point)
                 } else {
-                    currentSegmentPoints.add(point)
+                    val prev = currentSegmentPoints.last()
+                    // Check segment prev-point
+                    val isSegmentHit = eraserPoints.any { e ->
+                        distancePointToSegment(e, prev, point) <= threshold
+                    }
+
+                    if (isSegmentHit) {
+                        pathWasHit = true
+                        splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+                        currentSegmentPoints.clear()
+                        currentSegmentPoints.add(point)
+                    } else {
+                        currentSegmentPoints.add(point)
+                    }
                 }
+            }
+
+            if (currentSegmentPoints.isNotEmpty()) {
+                splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+            }
+
+            if (pathWasHit) {
+                changed = true
+                resultPaths.addAll(splitParts)
+            } else {
+                resultPaths.add(p)
             }
         }
 
-        if (currentSegmentPoints.isNotEmpty()) {
-            splitParts.add(p.copy(points = currentSegmentPoints.toList()))
+        if (changed) {
+            page.paths.clear()
+            page.paths.addAll(resultPaths)
         }
-
-        if (pathWasHit) {
-            changed = true
-            resultPaths.addAll(splitParts)
-        } else {
-            resultPaths.add(p)
-        }
+        return changed
     }
-
-    if (changed) {
-        page.paths.clear()
-        page.paths.addAll(resultPaths)
-    }
-    return changed
-}

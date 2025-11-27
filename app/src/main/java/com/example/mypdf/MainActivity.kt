@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
             // State initialized from settings or defaults
             var darkMode by remember { mutableStateOf(initialSettings?.isDarkMode ?: false) }
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
-            var gridScale by remember { mutableStateOf(initialSettings?.gridScale ?: 1.0f) }
+            var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
 

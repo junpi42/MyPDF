@@ -65,6 +65,7 @@ interface AppStrings {
     val toolThick: String
     val toolSmooth: String
     val toolUndo: String
+    val strokeThicknessLabel: String
     
     // Onboarding
     val welcomeTitle: String
@@ -229,6 +230,7 @@ object StringsEs : AppStrings {
     override val toolThick = "Grueso"
     override val toolSmooth = "Suave"
     override val toolUndo = "Deshacer"
+    override val strokeThicknessLabel = "Grosor"
     
     override val welcomeTitle = "Bienvenido"
     override val chooseLanguage = "Elige tu idioma"
@@ -388,6 +390,7 @@ object StringsEn : AppStrings {
     override val toolThick = "Thick"
     override val toolSmooth = "Smooth"
     override val toolUndo = "Undo"
+    override val strokeThicknessLabel = "Thickness"
 
     override val welcomeTitle = "Welcome"
     override val chooseLanguage = "Choose your language"
@@ -547,6 +550,7 @@ object StringsFr : AppStrings {
     override val toolThick = "Épais"
     override val toolSmooth = "Lisser"
     override val toolUndo = "Annuler"
+    override val strokeThicknessLabel = "Épaisseur"
 
     override val welcomeTitle = "Bienvenue"
     override val chooseLanguage = "Choisissez votre langue"
@@ -706,6 +710,7 @@ object StringsIt : AppStrings {
     override val toolThick = " spesso"
     override val toolSmooth = "Liscio"
     override val toolUndo = "Annulla"
+    override val strokeThicknessLabel = "Spessore"
 
     override val welcomeTitle = "Benvenuto"
     override val chooseLanguage = "Scegli la tua lingua"

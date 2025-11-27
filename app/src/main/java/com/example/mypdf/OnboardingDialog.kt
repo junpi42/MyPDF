@@ -1,6 +1,7 @@
 package com.example.mypdf
 
 import androidx.compose.ui.res.painterResource
+import com.example.mypdf.Language
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -25,10 +26,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -43,7 +41,7 @@ private enum class OnboardingStep {
     Welcome,
     Login,
     Register,
-    Language,
+    SelectLanguage,
     Theme,
     Daltonic,
     Loading
@@ -154,7 +152,7 @@ fun OnboardingDialog(
                                     s = s,
                                     onLogin = { currentStep = OnboardingStep.Login },
                                     onRegister = { currentStep = OnboardingStep.Register },
-                                    onGuest = { currentStep = OnboardingStep.Language }
+                                    onGuest = { currentStep = OnboardingStep.SelectLanguage }
                                 )
                             }
                             OnboardingStep.Login -> {
@@ -265,7 +263,7 @@ fun OnboardingDialog(
                                     )
                                 }
                                 Button(
-                                    onClick = { currentStep = OnboardingStep.Language }, // Continue to settings
+                                    onClick = { currentStep = OnboardingStep.SelectLanguage }, // Continue to settings
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(25.dp)
                                 ) {
@@ -278,7 +276,7 @@ fun OnboardingDialog(
                                     Text(s.backDescription)
                                 }
                             }
-                            OnboardingStep.Language -> {
+                            OnboardingStep.SelectLanguage -> {
                                 Text(
                                     text = s.chooseLanguage,
                                     style = MaterialTheme.typography.headlineSmall,
@@ -412,7 +410,7 @@ fun OnboardingDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = "${s.welcomeUser} ${if (username.isNotEmpty()) username else ""}",
+                                    text = "${s.welcomeUser} $username",
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     textAlign = TextAlign.Center
@@ -429,7 +427,7 @@ fun OnboardingDialog(
                 }
 
                 // Persistent Disclaimer (only show on settings steps)
-                if (currentStep == OnboardingStep.Language || currentStep == OnboardingStep.Theme || currentStep == OnboardingStep.Daltonic) {
+                if (currentStep == OnboardingStep.SelectLanguage || currentStep == OnboardingStep.Theme || currentStep == OnboardingStep.Daltonic) {
                     Text(
                         text = s.onboardingDisclaimer,
                         style = MaterialTheme.typography.bodySmall,
@@ -458,7 +456,7 @@ fun AnimatedGradientBackground(baseColor: Color) {
         label = "t"
     )
 
-    val color1 = baseColor
+
     val color2 = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
 
     // Animate gradient center
@@ -470,7 +468,7 @@ fun AnimatedGradientBackground(baseColor: Color) {
             .fillMaxSize()
             .background(
                 brush = Brush.radialGradient(
-                    colors = listOf(color2, color1),
+                    colors = listOf(color2, baseColor),
                     center = Offset(x * 2000f, y * 2000f), // Approximate screen size scaling
                     radius = 1500f
                 )
