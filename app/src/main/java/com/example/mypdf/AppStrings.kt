@@ -835,8 +835,8 @@ val LocalStrings = staticCompositionLocalOf<AppStrings> {
 }
 
 @Composable
-fun ProvideStrings(language: Language, content: @Composable () -> Unit) {
-    val strings = stringsFor(language)
+fun ProvideStrings(languageCode: String, content: @Composable () -> Unit) {
+    val strings = stringsFor(languageCode)
     androidx.compose.runtime.CompositionLocalProvider(LocalStrings provides strings) {
         content()
     }

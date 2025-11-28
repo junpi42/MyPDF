@@ -1015,6 +1015,9 @@ private fun PdfEditModeTablet(
         }
 
         // Barra lateral de herramientas sólo en modo edición
+        val config = LocalConfiguration.current
+        val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
+        
         Box(
             modifier = Modifier
                 .fillMaxHeight(if (isPortrait) 0.75f else 1f)
