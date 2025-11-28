@@ -15,7 +15,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
-import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -30,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
+@Suppress("UNUSED_PARAMETER") // el parámetro index puede no usarse en composición; suprimimos la advertencia
 @Composable
 fun PdfPageItem(
     index: Int,
@@ -44,11 +44,14 @@ fun PdfPageItem(
     smoothingEnabled: Boolean,
     onPathAdded: (DrawingPath) -> Unit,
     onErase: (List<Offset>) -> Unit,
+    // Añadimos callbacks de inicio/fin de gesto con valores por defecto para compatibilidad
+    onEraseStart: () -> Unit = {},
+    onEraseEnd: () -> Unit = {},
     darkMode: Boolean
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
-    var canvasW by remember { mutableStateOf(0f) }
-    var canvasH by remember { mutableStateOf(0f) }
+    var canvasW by remember { mutableFloatStateOf(0f) }
+    var canvasH by remember { mutableFloatStateOf(0f) }
 
     var eraserCenter by remember { mutableStateOf<Offset?>(null) }
 
@@ -110,191 +113,137 @@ fun PdfPageItem(
             shadowElevation = 4.dp,
             color = pageBg
         ) {
-            // Removed key(redrawTrigger) to prevent full Canvas recreation on every drag event
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                    .background(canvasBg)
-                    .onSizeChanged { newSize ->
-                        canvasW = newSize.width.toFloat()
-                        canvasH = newSize.height.toFloat()
-                    }
-                    .then(
-                        if (editMode && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
-                            Modifier.pointerInput(
-                                selectedTool,
-                                smoothingEnabled,
-                                currentStrokeWidth,
-                                currentColor,
-                                canvasW,
-                                canvasH
-                            ) {
+            // Construimos el modifier en dos pasos para mantener el código legible
+            val canvasBaseModifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                .background(canvasBg)
+                .onSizeChanged { newSize ->
+                    canvasW = newSize.width.toFloat()
+                    canvasH = newSize.height.toFloat()
+                }
 
-                                awaitEachGesture {
-                                    if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
-                                    currentPath.clear()
-
-                                    val down = awaitFirstDown()
-                                    var lastNorm = toNorm(down.position)
-
-                                    currentPath.add(lastNorm)
-
-                                    if (selectedTool == "eraser") {
-                                        eraserCenter = lastNorm
-                                    }
-
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == down.id }
-                                            ?: break
-
-                                        if (!change.pressed) break
-
-                                        if (change.position != change.previousPosition) {
-                                            val newNorm = toNorm(change.position)
-                                            currentPath.add(newNorm)
-
-                                            if (selectedTool == "eraser") {
-                                                eraserCenter = newNorm
-                                                onErase(listOf(lastNorm, newNorm))
-                                            }
-
-                                            lastNorm = newNorm
-                                            change.consume()
-                                        }
-                                    }
-
-                                    if (currentPath.isNotEmpty()) {
-                                            val basePoints = currentPath.toList()
-                                            val tiny = isTinyStroke(basePoints)
-
-                                            val final = if (
-                                                smoothingEnabled &&
-                                                (selectedTool == "marker" || selectedTool == "highlighter") &&
-                                                !tiny &&
-                                                basePoints.size > 1
-                                            ) {
-                                                smoothPath(basePoints, 1)
-                                            } else basePoints
-
-                                            if (selectedTool == "eraser") {
-                                                eraserCenter = final.lastOrNull()
-                                                onErase(final)
-                                            } else {
-                                                onPathAdded(
-                                                    DrawingPath(
-                                                        final,
-                                                        currentColor,
-                                                        currentStrokeWidth,
-                                                        isEraser = false
-                                                    )
-                                                )
-                                            }
-                                        }
-
-                                        currentPath.clear()
-                                        eraserCenter = null
-                                    }
-                                }
-                            } else Modifier
-                        )
+            val canvasModifier = if (editMode && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
+                canvasBaseModifier.pointerInput(
+                    selectedTool,
+                    smoothingEnabled,
+                    currentStrokeWidth,
+                    currentColor,
+                    canvasW,
+                    canvasH
                 ) {
-                    drawImage(
-                        bitmap.asImageBitmap(),
-                        dstSize = IntSize(
-                            size.width.roundToInt(),
-                            size.height.roundToInt()
-                        )
-                    )
+                    awaitEachGesture {
+                        if (canvasW <= 0f || canvasH <= 0f) return@awaitEachGesture
+                        currentPath.clear()
 
-                    // Dibujar anotaciones previas
-                    annotations.paths.forEach { p ->
-                        if (p.points.size > 1) {
-                            val path = Path().apply {
-                                val first = toPx(p.points.first())
-                                moveTo(first.x, first.y)
-                                p.points.drop(1).forEach { pt ->
-                                    val pp = toPx(pt)
-                                    lineTo(pp.x, pp.y)
+                        val down = awaitFirstDown()
+                        var lastNorm = toNorm(down.position)
+
+                        currentPath.add(lastNorm)
+
+                        if (selectedTool == "eraser") {
+                            eraserCenter = lastNorm
+                            onEraseStart()
+                        }
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            if (change.position != change.previousPosition) {
+                                val newNorm = toNorm(change.position)
+                                currentPath.add(newNorm)
+                                if (selectedTool == "eraser") {
+                                    eraserCenter = newNorm
+                                    onErase(listOf(lastNorm, newNorm))
                                 }
+                                lastNorm = newNorm
+                                change.consume()
                             }
-                            drawPath(
-                                path = path,
-                                color = p.color,
-                                style = Stroke(width = p.strokeWidth * size.width)
-                            )
-                        } else if (p.points.size == 1) {
-                            val pp = toPx(p.points.first())
-                            drawCircle(
-                                color = p.color,
-                                radius = (p.strokeWidth * size.width) / 2f,
-                                center = pp
-                            )
                         }
-                    }
 
-                    // Dibujar trazo actual
-                    if ((selectedTool == "marker" || selectedTool == "highlighter") && currentPath.isNotEmpty()) {
-                        val drawColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
-                        
-                        if (currentPath.size > 1) {
-                            val path = Path().apply {
-                                val first = toPx(currentPath.first())
-                                moveTo(first.x, first.y)
-                                currentPath.drop(1).forEach { pt ->
-                                    val pp = toPx(pt)
-                                    lineTo(pp.x, pp.y)
-                                }
+                        if (currentPath.isNotEmpty()) {
+                            val basePoints = currentPath.toList()
+                            val tiny = isTinyStroke(basePoints)
+                            val final = if (
+                                smoothingEnabled &&
+                                (selectedTool == "marker" || selectedTool == "highlighter") &&
+                                !tiny &&
+                                basePoints.size > 1
+                            ) {
+                                smoothPath(basePoints, 1)
+                            } else basePoints
+
+                            if (selectedTool == "eraser") {
+                                eraserCenter = final.lastOrNull()
+                                onErase(final)
+                                onEraseEnd()
+                            } else {
+                                onPathAdded(DrawingPath(final, currentColor, currentStrokeWidth, isEraser = false))
                             }
-                            drawPath(
-                                path = path,
-                                color = drawColor,
-                                style = Stroke(
-                                    width = currentStrokeWidth * size.width,
-                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                    join = androidx.compose.ui.graphics.StrokeJoin.Round
-                                )
-                            )
-                        } else {
-                            val pp = toPx(currentPath.first())
-                            drawCircle(
-                                color = drawColor,
-                                radius = (currentStrokeWidth * size.width) / 2f,
-                                center = pp
-                            )
                         }
+
+                        currentPath.clear()
+                        eraserCenter = null
                     }
+                }
+            } else canvasBaseModifier
 
-                    // Dibujar círculo del borrador
-                    if (selectedTool == "eraser") {
-                        eraserCenter?.let { centerNorm ->
-                            val centerPx = toPx(centerNorm)
-                            val radiusPx = eraserRadiusNorm * size.width
+            Canvas(modifier = canvasModifier) {
+                // Dibujo en el Canvas
+                drawImage(bitmap.asImageBitmap(), dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()))
 
-                            drawCircle(
-                                color = Color.Red.copy(alpha = 0.5f),
-                                radius = radiusPx,
-                                center = centerPx,
-                                style = Stroke(width = 4f)
-                            )
+                // Dibujar anotaciones previas
+                annotations.paths.forEach { p ->
+                    if (p.points.size > 1) {
+                        val path = Path().apply {
+                            val first = toPx(p.points.first())
+                            moveTo(first.x, first.y)
+                            p.points.drop(1).forEach { pt ->
+                                val pp = toPx(pt)
+                                lineTo(pp.x, pp.y)
+                            }
                         }
+                        drawPath(path = path, color = p.color, style = Stroke(width = p.strokeWidth * size.width))
+                    } else if (p.points.size == 1) {
+                        val pp = toPx(p.points.first())
+                        drawCircle(color = p.color, radius = (p.strokeWidth * size.width) / 2f, center = pp)
+                    }
+                }
+
+                // Dibujar trazo actual
+                if ((selectedTool == "marker" || selectedTool == "highlighter") && currentPath.isNotEmpty()) {
+                    val drawColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
+                    if (currentPath.size > 1) {
+                        val path = Path().apply {
+                            val first = toPx(currentPath.first())
+                            moveTo(first.x, first.y)
+                            currentPath.drop(1).forEach { pt ->
+                                val pp = toPx(pt)
+                                lineTo(pp.x, pp.y)
+                            }
+                        }
+                        drawPath(path = path, color = drawColor, style = Stroke(width = currentStrokeWidth * size.width, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                    } else {
+                        val pp = toPx(currentPath.first())
+                        drawCircle(color = drawColor, radius = (currentStrokeWidth * size.width) / 2f, center = pp)
+                    }
+                }
+
+                // Dibujar círculo del borrador
+                if (selectedTool == "eraser") {
+                    eraserCenter?.let { centerNorm ->
+                        val centerPx = toPx(centerNorm)
+                        val radiusPx = eraserRadiusNorm * size.width
+                        drawCircle(color = Color.Red.copy(alpha = 0.5f), radius = radiusPx, center = centerPx, style = Stroke(width = 4f))
                     }
                 }
             }
+        }
     } else {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.fillMaxWidth().height(200.dp).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
             if (showLoadingLabel) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 2.dp
-                )
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
             }
         }
     }

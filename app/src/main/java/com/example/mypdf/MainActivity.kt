@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.*
@@ -83,7 +82,7 @@ class MainActivity : ComponentActivity() {
             // State initialized from settings or defaults
             var darkMode by remember { mutableStateOf(initialSettings?.isDarkMode ?: false) }
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
-            var gridScale by remember { mutableStateOf(initialSettings?.gridScale ?: 1.0f) }
+            var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
 
@@ -103,7 +102,7 @@ class MainActivity : ComponentActivity() {
 
             MyPDFTheme(darkTheme = darkMode) {
                 // Pasamos el código de idioma (EN, ES, FR, IT) a ProvideStrings
-                ProvideStrings(languageCode = language.name) {
+                ProvideStrings(language = language) {
                      Surface(modifier = Modifier.fillMaxSize()) {
                         val deviceType = rememberDeviceType()
                         if (showOnboarding) {
@@ -165,12 +164,18 @@ private fun AppRootAdaptive(
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
 
-    // Hoisted Tutorial State
-    var tutorialState by remember { mutableStateOf(TutorialState(step = if (!tutorialCompleted) TutorialStep.INTRO_DIALOG else TutorialStep.NONE)) }
+    // Hoisted Tutorial State: guardamos solo el paso en savedState para sobrevivir rotaciones,
+    // y el targetRect en memoria normal (no es serializable)
+    var tutorialStep by rememberSaveable { mutableStateOf(if (!tutorialCompleted) TutorialStep.INTRO_DIALOG else TutorialStep.NONE) }
+    var tutorialTargetRect by remember { mutableStateOf<Rect?>(null) }
+
+    // Derivamos el TutorialState que se pasa a pantallas hijas
+    val tutorialState = TutorialState(step = tutorialStep, targetRect = tutorialTargetRect)
 
     LaunchedEffect(tutorialCompleted) {
         if (tutorialCompleted) {
-            tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+            tutorialStep = TutorialStep.NONE
+            tutorialTargetRect = null
         }
     }
 
@@ -194,11 +199,12 @@ private fun AppRootAdaptive(
                     tutorialCompleted = tutorialCompleted,
                     onTutorialComplete = {
                         onTutorialComplete()
-                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+                        tutorialStep = TutorialStep.NONE
+                        tutorialTargetRect = null
                     },
                     onResetTutorial = onResetTutorial,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialState = it }
+                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect }
                 )
             } else {
                 PdfEditScreen(
@@ -210,10 +216,11 @@ private fun AppRootAdaptive(
                     onToggleDaltonic = onToggleDaltonic,
                     language = language,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialState = it },
+                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
                     onTutorialComplete = {
                         onTutorialComplete()
-                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
+                        tutorialStep = TutorialStep.NONE
+                        tutorialTargetRect = null
                     }
                 )
             }

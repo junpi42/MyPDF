@@ -1,5 +1,6 @@
 package com.example.mypdf
 
+import com.example.mypdf.Language
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 
@@ -64,6 +65,7 @@ interface AppStrings {
     val toolThick: String
     val toolSmooth: String
     val toolUndo: String
+    val strokeThicknessLabel: String
     
     // Onboarding
     val welcomeTitle: String
@@ -228,6 +230,7 @@ object StringsEs : AppStrings {
     override val toolThick = "Grueso"
     override val toolSmooth = "Suave"
     override val toolUndo = "Deshacer"
+    override val strokeThicknessLabel = "Grosor"
     
     override val welcomeTitle = "Bienvenido"
     override val chooseLanguage = "Elige tu idioma"
@@ -387,6 +390,7 @@ object StringsEn : AppStrings {
     override val toolThick = "Thick"
     override val toolSmooth = "Smooth"
     override val toolUndo = "Undo"
+    override val strokeThicknessLabel = "Thickness"
 
     override val welcomeTitle = "Welcome"
     override val chooseLanguage = "Choose your language"
@@ -546,6 +550,7 @@ object StringsFr : AppStrings {
     override val toolThick = "Épais"
     override val toolSmooth = "Lisser"
     override val toolUndo = "Annuler"
+    override val strokeThicknessLabel = "Épaisseur"
 
     override val welcomeTitle = "Bienvenue"
     override val chooseLanguage = "Choisissez votre langue"
@@ -705,6 +710,7 @@ object StringsIt : AppStrings {
     override val toolThick = " spesso"
     override val toolSmooth = "Liscio"
     override val toolUndo = "Annulla"
+    override val strokeThicknessLabel = "Spessore"
 
     override val welcomeTitle = "Benvenuto"
     override val chooseLanguage = "Scegli la tua lingua"
@@ -815,13 +821,12 @@ object StringsIt : AppStrings {
 
 
 // Selección de textos en función de un código de idioma simple (por ejemplo: "EN", "ES", "FR", "IT").
-fun stringsFor(langCode: String): AppStrings {
-    return when (langCode.uppercase()) {
-        "EN" -> StringsEn
-        "ES" -> StringsEs
-        "FR" -> StringsFr
-        "IT" -> StringsIt
-        else -> StringsEn
+fun stringsFor(language: Language): AppStrings {
+    return when (language) {
+        Language.EN -> StringsEn
+        Language.ES -> StringsEs
+        Language.FR -> StringsFr
+        Language.IT -> StringsIt
     }
 }
 

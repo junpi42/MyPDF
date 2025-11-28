@@ -1,10 +1,12 @@
 package com.example.mypdf
 
+import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +16,7 @@ import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,6 +33,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 
 // Barra de herramientas lateral extraída de PdfViewerScreen
@@ -49,11 +53,19 @@ fun StyledLeftToolBar(
     darkMode: Boolean, // idem
     language: Language, // idem
     onToolboxPositioned: (Rect) -> Unit = {},
+    hasUndo: Boolean = true,
+    onUndo: () -> Unit = {},
+    onMarkerLongPress: () -> Unit = {},
+    onHighlighterLongPress: () -> Unit = {},
+    onMarkerButtonPositioned: (Rect) -> Unit = {},
+    onHighlighterButtonPositioned: (Rect) -> Unit = {},
+    showSlider: Boolean = true, // Si es false, no se muestra el slider (útil para landscape)
     modifier: Modifier = Modifier
 ) {
     val s = strings()
-    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val config = LocalConfiguration.current
     val isTablet = config.screenWidthDp > 600
+    val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
     
     // Toolbar un pelín más estrecha
     val toolbarWidth = if (isTablet) 88.dp else 72.dp
@@ -89,20 +101,30 @@ fun StyledLeftToolBar(
                 iconSize = iconSize
             )
 
-            StyledToolButton(
+            StyledToolButtonWithLongPress(
                 icon = Icons.Default.Create,
-                label = "Marker", // TODO: Add to strings
+                label = "Marker",
                 selected = selectedTool == "marker",
                 onClick = { onSelectTool("marker") },
+                onLongClick = {
+                    onSelectTool("marker")
+                    onMarkerLongPress()
+                },
+                onPositioned = onMarkerButtonPositioned,
                 size = buttonSize,
                 iconSize = iconSize
             )
             
-            StyledToolButton(
+            StyledToolButtonWithLongPress(
                 icon = Icons.Default.BorderColor,
-                label = "Highlighter", // TODO: Add to strings
+                label = "Highlighter",
                 selected = selectedTool == "highlighter",
                 onClick = { onSelectTool("highlighter") },
+                onLongClick = {
+                    onSelectTool("highlighter")
+                    onHighlighterLongPress()
+                },
+                onPositioned = onHighlighterButtonPositioned,
                 size = buttonSize,
                 iconSize = iconSize
             )
@@ -114,6 +136,18 @@ fun StyledLeftToolBar(
                 onClick = { onSelectTool("eraser") },
                 size = buttonSize,
                 iconSize = iconSize
+            )
+
+            // Botón de Revertir/Deshacer ubicado justo debajo del borrador
+            // Botón de Revertir/Deshacer siempre visible, deshabilitado si no hay undo
+            StyledToolButton(
+                icon = Icons.Default.Undo,
+                label = s.toolUndo,
+                selected = false,
+                onClick = onUndo,
+                size = buttonSize,
+                iconSize = iconSize,
+                enabled = hasUndo
             )
 
             Spacer(Modifier.height(8.dp))
@@ -156,7 +190,7 @@ fun StyledLeftToolBar(
             if (selectedTool == "marker" || selectedTool == "highlighter") {
                 Box(
                     modifier = Modifier
-                        .size(height = 120.dp, width = 48.dp)
+                        .size(height = if (showSlider) 120.dp else 80.dp, width = 48.dp)
                         .padding(4.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -191,8 +225,8 @@ fun StyledLeftToolBar(
                 }
             }
 
-            // --- Slider Group ---
-            if (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter") {
+            // --- Slider Group (solo si showSlider es true) ---
+            if (showSlider && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
                 val (minVal, maxVal) = when (selectedTool) {
                     "marker" -> 0.003f to 0.02f
                     "highlighter" -> 0.01f to 0.08f
@@ -249,7 +283,8 @@ fun StyledToolButton(
     onClick: () -> Unit,
     compact: Boolean = false,
     size: androidx.compose.ui.unit.Dp = 56.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 24.dp
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp,
+    enabled: Boolean = true
 ) {
     val containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
     val contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
@@ -264,7 +299,8 @@ fun StyledToolButton(
                 contentColor = contentColor,
                 checkedContainerColor = containerColor,
                 checkedContentColor = contentColor
-            )
+            ),
+            enabled = enabled
         ) {
             Icon(icon, contentDescription = label, modifier = Modifier.size(iconSize))
         }
@@ -279,9 +315,59 @@ fun StyledToolButton(
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                 checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-            )
+            ),
+            enabled = enabled
         ) {
             Icon(icon, contentDescription = label, modifier = Modifier.size(iconSize))
+        }
+    }
+}
+
+/**
+ * Botón de herramienta con soporte para pulsación larga.
+ * Usado para marker y highlighter donde el long press abre el panel de ajustes.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun StyledToolButtonWithLongPress(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onPositioned: (Rect) -> Unit = {},
+    size: androidx.compose.ui.unit.Dp = 56.dp,
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp,
+    enabled: Boolean = true
+) {
+    val containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Surface(
+        modifier = Modifier
+            .size(size)
+            .clip(MaterialTheme.shapes.medium)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .onGloballyPositioned { coordinates ->
+                onPositioned(coordinates.boundsInRoot())
+            },
+        color = containerColor,
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                modifier = Modifier.size(iconSize),
+                tint = if (enabled) contentColor else contentColor.copy(alpha = 0.38f)
+            )
         }
     }
 }
