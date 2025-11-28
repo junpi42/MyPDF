@@ -178,6 +178,33 @@ fun PdfViewerScreen(
         }
     }
 
+    // Metronome State
+    var metronomeOn by remember { mutableStateOf(false) }
+    var metronomeBpm by remember { mutableIntStateOf(60) }
+    var metronomeTimeSignature by remember { mutableStateOf(4 to 4) }
+    var showMetronomeSettings by remember { mutableStateOf(false) }
+    var hasOpenedMetronomeSettings by remember { mutableStateOf(false) }
+    
+    // Metronome Engine
+    val metronomeEngine = remember { MetronomeEngine() }
+    
+    // Cleanup metronome on dispose
+    DisposableEffect(Unit) {
+        onDispose {
+            metronomeEngine.release()
+        }
+    }
+    
+    // Stop metronome when entering concert mode or exiting
+    LaunchedEffect(concertModeOn) {
+        if (concertModeOn && metronomeOn) {
+            metronomeOn = false
+            metronomeEngine.stop()
+        }
+    }
+
+
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -504,6 +531,41 @@ fun PdfViewerScreen(
                     onTunerPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(tunerButton = rect) } },
                     onConcertPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(concertButton = rect) } },
                     onBackPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(backButton = rect) } },
+                    metronomeOn = metronomeOn,
+                    onMetronomeClick = {
+                        if (metronomeOn) {
+                            metronomeOn = false
+                            metronomeEngine.stop()
+                        } else {
+                            if (!hasOpenedMetronomeSettings) {
+                                hasOpenedMetronomeSettings = true
+                                showMetronomeSettings = true
+                            }
+                            metronomeOn = true
+                            val pattern = when (metronomeTimeSignature.first) {
+                                2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                                3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                                4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                                else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                            }
+                            metronomeEngine.start(scope, metronomeBpm, pattern)
+                        }
+                    },
+                    onMetronomeLongClick = {
+                        if (!metronomeOn) {
+                            metronomeOn = true
+                            val pattern = when (metronomeTimeSignature.first) {
+                                2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                                3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                                4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                                else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                            }
+                            metronomeEngine.start(scope, metronomeBpm, pattern)
+                        }
+                        showMetronomeSettings = true
+                    },
                     centerContent = {
                         if (tunerOn) {
                             TunnerSmall(
@@ -879,6 +941,54 @@ fun PdfViewerScreen(
                 onDismiss = onTutorialComplete
             )
         }
+
+        // Metronome Settings Panel
+        if (showMetronomeSettings) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) { showMetronomeSettings = false },
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Box(modifier = Modifier.padding(top = 80.dp)) {
+                    MetronomeSettingsPanel(
+                        visible = showMetronomeSettings,
+                        bpm = metronomeBpm,
+                        timeSignature = metronomeTimeSignature,
+                        onBpmChange = { newBpm -> 
+                            metronomeBpm = newBpm
+                            if (metronomeOn) {
+                                val pattern = when (metronomeTimeSignature.first) {
+                                    2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                                    3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                                    4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                                    6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                                    else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                                }
+                                metronomeEngine.updateConfig(newBpm, pattern)
+                            }
+                        },
+                        onTimeSignatureChange = { newSig ->
+                            metronomeTimeSignature = newSig
+                            val pattern = when (newSig.first) {
+                                2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                                3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                                4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                                else -> List(newSig.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                            }
+                            if (metronomeOn) {
+                                metronomeEngine.updateConfig(metronomeBpm, pattern)
+                            }
+                        },
+                        onDismiss = { showMetronomeSettings = false }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1159,7 +1269,6 @@ private fun PdfEditModeTablet(
         }
     }
 }
-
 @Composable
 private fun PdfEditModePhone(
     listState: androidx.compose.foundation.lazy.LazyListState,

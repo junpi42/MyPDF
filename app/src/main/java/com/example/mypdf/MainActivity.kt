@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
 
             MyPDFTheme(darkTheme = darkMode) {
                 // Pasamos el código de idioma (EN, ES, FR, IT) a ProvideStrings
-                ProvideStrings(language = language) {
+                ProvideStrings(languageCode = language.name) {
                      Surface(modifier = Modifier.fillMaxSize()) {
                         val deviceType = rememberDeviceType()
                         if (showOnboarding) {
