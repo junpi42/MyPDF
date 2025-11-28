@@ -28,6 +28,7 @@ fun MetronomeSettingsPanel(
     onTimeSignatureChange: (Pair<Int, Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val s = strings()
     AnimatedVisibility(
         visible = visible,
         enter = slideInHorizontally { it } + fadeIn(),
@@ -53,12 +54,12 @@ fun MetronomeSettingsPanel(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Metronome",
+                        text = s.metronomeTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     TextButton(onClick = onDismiss) {
-                        Text("Close")
+                        Text(s.close)
                     }
                 }
 
@@ -71,7 +72,7 @@ fun MetronomeSettingsPanel(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Tempo", style = MaterialTheme.typography.labelLarge)
+                        Text(s.metronomeTempo, style = MaterialTheme.typography.labelLarge)
                         Text(
                             "$bpm BPM",
                             style = MaterialTheme.typography.bodyLarge,
@@ -109,13 +110,13 @@ fun MetronomeSettingsPanel(
 
                 // Time Signature Control
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Time Signature", style = MaterialTheme.typography.labelLarge)
+                    Text(s.metronomeTimeSignature, style = MaterialTheme.typography.labelLarge)
                     
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val signatures = listOf(2 to 4, 3 to 4, 4 to 4, 6 to 8)
+                        val signatures = listOf(1 to 1, 2 to 4, 3 to 4, 4 to 4)
                         signatures.forEach { sig ->
                             val selected = sig == timeSignature
                             FilterChip(

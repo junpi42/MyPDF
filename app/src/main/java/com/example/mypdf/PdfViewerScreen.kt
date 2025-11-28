@@ -962,10 +962,10 @@ fun PdfViewerScreen(
                             metronomeBpm = newBpm
                             if (metronomeOn) {
                                 val pattern = when (metronomeTimeSignature.first) {
+                                    1 -> listOf(AccentLevel.STRONG)
                                     2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
                                     3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
                                     4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
-                                    6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
                                     else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
                                 }
                                 metronomeEngine.updateConfig(newBpm, pattern)
@@ -974,10 +974,10 @@ fun PdfViewerScreen(
                         onTimeSignatureChange = { newSig ->
                             metronomeTimeSignature = newSig
                             val pattern = when (newSig.first) {
+                                1 -> listOf(AccentLevel.STRONG)
                                 2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
                                 3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
                                 4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
-                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
                                 else -> List(newSig.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
                             }
                             if (metronomeOn) {

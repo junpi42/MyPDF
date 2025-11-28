@@ -175,6 +175,12 @@ interface AppStrings {
     val startCalibration: String
     val eyeLeft: String
     val eyeRight: String
+
+    // Metronome
+    val metronomeTitle: String
+    val metronomeTempo: String
+    val metronomeTimeSignature: String
+    val metronomeDescription: String
 }
 
 object StringsEs : AppStrings {
@@ -335,6 +341,12 @@ object StringsEs : AppStrings {
     override val startCalibration = "Iniciar Calibración"
     override val eyeLeft = "👁 Izq"
     override val eyeRight = "👁 Der"
+
+    // Metronome
+    override val metronomeTitle = "Metrónomo"
+    override val metronomeTempo = "Tempo"
+    override val metronomeTimeSignature = "Compás"
+    override val metronomeDescription = "Metrónomo"
 }
 
 object StringsEn : AppStrings {
@@ -495,6 +507,12 @@ object StringsEn : AppStrings {
     override val startCalibration = "Start Calibration"
     override val eyeLeft = "👁 Left"
     override val eyeRight = "👁 Right"
+
+    // Metronome
+    override val metronomeTitle = "Metronome"
+    override val metronomeTempo = "Tempo"
+    override val metronomeTimeSignature = "Time Signature"
+    override val metronomeDescription = "Metronome"
 }
 
 object StringsFr : AppStrings {
@@ -655,6 +673,12 @@ object StringsFr : AppStrings {
     override val startCalibration = "Démarrer le Calibrage"
     override val eyeLeft = "👁 G"
     override val eyeRight = "👁 D"
+
+    // Metronome
+    override val metronomeTitle = "Métronome"
+    override val metronomeTempo = "Tempo"
+    override val metronomeTimeSignature = "Signature rythmique"
+    override val metronomeDescription = "Métronome"
 }
 
 object StringsIt : AppStrings {
@@ -815,6 +839,12 @@ object StringsIt : AppStrings {
     override val startCalibration = "Avvia Calibrazione"
     override val eyeLeft = "👁 Sx"
     override val eyeRight = "👁 Dx"
+
+    // Metronome
+    override val metronomeTitle = "Metronomo"
+    override val metronomeTempo = "Tempo"
+    override val metronomeTimeSignature = "Tempo"
+    override val metronomeDescription = "Metronomo"
 }
 
 

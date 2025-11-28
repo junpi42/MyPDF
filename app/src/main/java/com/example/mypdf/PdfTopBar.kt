@@ -24,7 +24,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.AvTimer
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -120,42 +120,6 @@ fun StyledTopBar(
 
 
 
-            // Metronome Button
-            Box(contentAlignment = Alignment.Center) {
-                // Usamos combinedClickable para soportar long press
-                // Necesitamos un Box contenedor porque IconButton no soporta onLongClick nativamente de forma fácil
-                Box(
-                    modifier = Modifier
-                        .size(height)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = onMetronomeClick,
-                            onLongClick = onMetronomeLongClick
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Icono de metrónomo (usamos Timer como proxy si no hay uno mejor, o construimos uno)
-                    // Usaremos Icons.Default.Timer por ahora o AccessTime
-                    Icon(
-                        androidx.compose.material.icons.Icons.Default.AccessTime, // Placeholder visual
-                        contentDescription = "Metronome",
-                        tint = if (metronomeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
-                    )
-                }
-                
-                if (metronomeOn) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-8).dp, y = 8.dp)
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                }
-            }
-
             // Tuner Button
             IconButton(
                 onClick = onTunerClick,
@@ -182,6 +146,40 @@ fun StyledTopBar(
                                 .background(MaterialTheme.colorScheme.error)
                         )
                     }
+                }
+            }
+
+            // Metronome Button
+            Box(contentAlignment = Alignment.Center) {
+                // Usamos combinedClickable para soportar long press
+                // Necesitamos un Box contenedor porque IconButton no soporta onLongClick nativamente de forma fácil
+                Box(
+                    modifier = Modifier
+                        .size(height)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = onMetronomeClick,
+                            onLongClick = onMetronomeLongClick
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Filled.AvTimer,
+                        contentDescription = s.metronomeDescription,
+                        tint = if (metronomeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
+                    )
+                }
+                
+                if (metronomeOn) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-8).dp, y = 8.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
                 }
             }
 
