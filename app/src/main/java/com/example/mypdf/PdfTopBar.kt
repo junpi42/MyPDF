@@ -22,8 +22,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.*
 import androidx.compose.animation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.AvTimer
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun StyledTopBar(
     onBack: () -> Unit,
@@ -38,7 +41,10 @@ fun StyledTopBar(
     onBackPositioned: (Rect) -> Unit = {},
     centerContent: @Composable () -> Unit = {},
     showUndo: Boolean = false,
-    onUndo: () -> Unit = {}
+    onUndo: () -> Unit = {},
+    metronomeOn: Boolean = false,
+    onMetronomeClick: () -> Unit = {},
+    onMetronomeLongClick: () -> Unit = {}
 ) {
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -112,6 +118,8 @@ fun StyledTopBar(
                 centerContent()
             }
 
+
+
             // Tuner Button
             IconButton(
                 onClick = onTunerClick,
@@ -141,6 +149,40 @@ fun StyledTopBar(
                 }
             }
 
+            // Metronome Button
+            Box(contentAlignment = Alignment.Center) {
+                // Usamos combinedClickable para soportar long press
+                // Necesitamos un Box contenedor porque IconButton no soporta onLongClick nativamente de forma fácil
+                Box(
+                    modifier = Modifier
+                        .size(height)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = onMetronomeClick,
+                            onLongClick = onMetronomeLongClick
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Filled.AvTimer,
+                        contentDescription = s.metronomeDescription,
+                        tint = if (metronomeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
+                    )
+                }
+                
+                if (metronomeOn) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-8).dp, y = 8.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+            }
+
             // Concert Mode Button
             IconButton(
                 onClick = onConcertClick,
@@ -157,8 +199,6 @@ fun StyledTopBar(
                     modifier = Modifier.size(32.dp * (if (isTablet) 1.5f else 1f))
                 )
             }
-
-
-         }
-     }
- }
+        }
+    }
+}
