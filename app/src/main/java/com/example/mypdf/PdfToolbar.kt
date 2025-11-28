@@ -57,6 +57,8 @@ fun StyledLeftToolBar(
     onUndo: () -> Unit = {},
     onMarkerLongPress: () -> Unit = {},
     onHighlighterLongPress: () -> Unit = {},
+    onMarkerButtonPositioned: (Rect) -> Unit = {},
+    onHighlighterButtonPositioned: (Rect) -> Unit = {},
     showSlider: Boolean = true, // Si es false, no se muestra el slider (útil para landscape)
     modifier: Modifier = Modifier
 ) {
@@ -108,6 +110,7 @@ fun StyledLeftToolBar(
                     onSelectTool("marker")
                     onMarkerLongPress()
                 },
+                onPositioned = onMarkerButtonPositioned,
                 size = buttonSize,
                 iconSize = iconSize
             )
@@ -121,6 +124,7 @@ fun StyledLeftToolBar(
                     onSelectTool("highlighter")
                     onHighlighterLongPress()
                 },
+                onPositioned = onHighlighterButtonPositioned,
                 size = buttonSize,
                 iconSize = iconSize
             )
@@ -331,6 +335,7 @@ fun StyledToolButtonWithLongPress(
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onPositioned: (Rect) -> Unit = {},
     size: androidx.compose.ui.unit.Dp = 56.dp,
     iconSize: androidx.compose.ui.unit.Dp = 24.dp,
     enabled: Boolean = true
@@ -346,7 +351,10 @@ fun StyledToolButtonWithLongPress(
                 enabled = enabled,
                 onClick = onClick,
                 onLongClick = onLongClick
-            ),
+            )
+            .onGloballyPositioned { coordinates ->
+                onPositioned(coordinates.boundsInRoot())
+            },
         color = containerColor,
         shape = MaterialTheme.shapes.medium
     ) {

@@ -158,20 +158,7 @@ fun StyledTopBar(
                 )
             }
 
-            // Undo Button (opcional)
-            if (showUndo) {
-                IconButton(
-                    onClick = onUndo,
-                    modifier = Modifier.size(height)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Undo,
-                        contentDescription = strings().toolUndo,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
-                    )
-                }
-            }
+
          }
      }
  }
