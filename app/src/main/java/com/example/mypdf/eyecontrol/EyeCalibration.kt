@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.mypdf.strings
 
 private const val PREFS_NAME = "eye_calibration"
 private const val KEY_NORMAL_LEFT = "normal_left"
@@ -203,7 +202,7 @@ fun EyeCalibrationDialog(
                         Spacer(modifier = Modifier.height(16.dp))
                         
                         Text(
-                            text = strings().calibrationTitle,
+                            text = "Control por Guiño",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -212,9 +211,9 @@ fun EyeCalibrationDialog(
                         
                         Text(
                             text = if (isCalibrated) 
-                                strings().calibrationCalibrated 
+                                "✓ Calibrado" 
                             else 
-                                strings().calibrationNotCalibrated,
+                                "Sin calibrar - Usa valores predeterminados",
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (isCalibrated) 
                                 Color(0xFF4CAF50) 
@@ -228,8 +227,8 @@ fun EyeCalibrationDialog(
                         // Botón de calibrar
                         CalibrationMenuButton(
                             icon = Icons.Default.Tune,
-                            title = if (isCalibrated) strings().recalibrationButton else strings().calibrationButton,
-                            subtitle = strings().calibrationSubtitle,
+                            title = if (isCalibrated) "Recalibrar" else "Calibrar",
+                            subtitle = "Ajusta la detección a tus ojos",
                             onClick = onStartCalibration
                         )
                         
@@ -239,8 +238,8 @@ fun EyeCalibrationDialog(
                         if (isCalibrated) {
                             CalibrationMenuButton(
                                 icon = Icons.Default.RestartAlt,
-                                title = strings().resetButton,
-                                subtitle = strings().resetSubtitle,
+                                title = "Restablecer",
+                                subtitle = "Volver a valores predeterminados",
                                 onClick = onResetCalibration,
                                 isDestructive = true
                             )
@@ -253,7 +252,7 @@ fun EyeCalibrationDialog(
                             onClick = onDismiss,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(strings().close)
+                            Text("Cerrar")
                         }
                     }
                 }
@@ -336,51 +335,50 @@ fun CalibrationScreen(
     onStartCalibration: () -> Unit = {},
     upcomingStep: CalibrationStep? = null
 ) {
-    val s = strings()
     val stepInfo = when (step) {
         CalibrationStep.WAITING_START -> {
             when (upcomingStep) {
                 CalibrationStep.NORMAL_EYES -> Triple(
-                    s.stepPreparation,
-                    s.stepReady,
-                    s.stepReadyDesc
+                    "Preparación",
+                    "Listo para calibrar",
+                    "Posiciona tu cara frente a la cámara y pulsa Iniciar cuando estés listo"
                 )
                 CalibrationStep.WINK_LEFT -> Triple(
-                    s.stepPreparation,
-                    s.stepReady,
-                    s.stepWinkLeftDesc
+                    "Preparación",
+                    "Listo para guiño izquierdo",
+                    "Coloca tu cara y pulsa Iniciar para comenzar el guiño izquierdo"
                 )
                 CalibrationStep.WINK_RIGHT -> Triple(
-                    s.stepPreparation,
-                    s.stepReady,
-                    s.stepWinkRightDesc
+                    "Preparación",
+                    "Listo para guiño derecho",
+                    "Coloca tu cara y pulsa Iniciar para comenzar el guiño derecho"
                 )
                 else -> Triple(
-                    s.stepPreparation,
-                    s.stepReady,
-                    s.stepReadyDesc
+                    "Preparación",
+                    "Listo para calibrar",
+                    "Posiciona tu cara frente a la cámara y pulsa Iniciar cuando estés listo"
                 )
             }
         }
         CalibrationStep.NORMAL_EYES -> Triple(
-            "1 / 3",
-            s.stepNormalEyes,
-            s.stepNormalEyesDesc
+            "Paso 1 de 3",
+            "Mira a la cámara",
+            "Mantén los dos ojos abiertos y la cabeza quieta"
         )
         CalibrationStep.WINK_LEFT -> Triple(
-            "2 / 3",
-            s.stepWinkLeft,
-            s.stepWinkLeftDesc
+            "Paso 2 de 3",
+            "Guiño izquierdo",
+            "Cierra solo el ojo izquierdo y mantén el derecho abierto"
         )
         CalibrationStep.WINK_RIGHT -> Triple(
-            "3 / 3",
-            s.stepWinkRight,
-            s.stepWinkRightDesc
+            "Paso 3 de 3",
+            "Guiño derecho",
+            "Cierra solo el ojo derecho y mantén el izquierdo abierto"
         )
         CalibrationStep.COMPLETE -> Triple(
-            s.stepComplete,
-            s.stepCompleteDesc,
-            s.stepCompleteSubDesc
+            "¡Completado!",
+            "Calibración exitosa",
+            "Tu perfil de detección ha sido guardado"
         )
         else -> Triple("", "", "")
     }
@@ -396,7 +394,14 @@ fun CalibrationScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF1a1a2e),
+                            Color(0xFF16213e)
+                        )
+                    )
+                ),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -409,7 +414,7 @@ fun CalibrationScreen(
                 Text(
                     text = stepInfo.first,
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    color = Color.White.copy(alpha = 0.7f)
                 )
                 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -427,7 +432,7 @@ fun CalibrationScreen(
                     text = stepInfo.second,
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = Color.White
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -436,7 +441,7 @@ fun CalibrationScreen(
                 Text(
                     text = stepInfo.third,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                    color = Color.White.copy(alpha = 0.8f),
                     textAlign = TextAlign.Center
                 )
                 
@@ -451,7 +456,7 @@ fun CalibrationScreen(
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp)),
                         color = Color(0xFF4CAF50),
-                        trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f)
+                        trackColor = Color.White.copy(alpha = 0.2f)
                     )
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -459,7 +464,7 @@ fun CalibrationScreen(
                     Text(
                         text = "${(progress * 100).toInt()}%",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        color = Color.White.copy(alpha = 0.7f)
                     )
                     
                     // Mostrar valores en tiempo real
@@ -470,12 +475,12 @@ fun CalibrationScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             EyeValueIndicator(
-                                label = strings().eyeLeft,
+                                label = "👁 Izq",
                                 value = currentLeftEye,
                                 isClosed = step == CalibrationStep.WINK_LEFT
                             )
                             EyeValueIndicator(
-                                label = strings().eyeRight,
+                                label = "👁 Der",
                                 value = currentRightEye,
                                 isClosed = step == CalibrationStep.WINK_RIGHT
                             )
@@ -501,7 +506,7 @@ fun CalibrationScreen(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(strings().startCalibration, fontSize = 18.sp)
+                            Text("Iniciar Calibración", fontSize = 18.sp)
                         }
                         
                         Spacer(modifier = Modifier.height(16.dp))
@@ -514,7 +519,7 @@ fun CalibrationScreen(
                             ),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text(strings().cancel)
+                            Text("Cancelar")
                         }
                     }
                     CalibrationStep.COMPLETE -> {
@@ -530,7 +535,7 @@ fun CalibrationScreen(
                         ) {
                             Icon(Icons.Default.Check, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(strings().finish, fontSize = 18.sp)
+                            Text("Finalizar", fontSize = 18.sp)
                         }
                     }
                     else -> {
@@ -538,11 +543,11 @@ fun CalibrationScreen(
                             onClick = onCancel,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onBackground
+                                contentColor = Color.White
                             ),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text(strings().cancel)
+                            Text("Cancelar")
                         }
                     }
                 }
@@ -567,7 +572,7 @@ private fun EyeValueIndicator(
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+            color = Color.White.copy(alpha = 0.7f)
         )
         Text(
             text = String.format("%.2f", value),
@@ -626,7 +631,7 @@ private fun CalibrationEyeAnimation(
             progress = progress,
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF4CAF50),
-            trackColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f),
+            trackColor = Color.White.copy(alpha = 0.2f),
             strokeWidth = 6.dp
         )
         
@@ -641,7 +646,7 @@ private fun CalibrationEyeAnimation(
                     .size(40.dp)
                     .scale(scaleY = if (step == CalibrationStep.WINK_LEFT) 0.15f else 1f, scaleX = 1f)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onBackground)
+                    .background(Color.White)
             )
             
             // Ojo derecho
@@ -650,7 +655,7 @@ private fun CalibrationEyeAnimation(
                     .size(40.dp)
                     .scale(scaleY = if (step == CalibrationStep.WINK_RIGHT) 0.15f else 1f, scaleX = 1f)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onBackground)
+                    .background(Color.White)
             )
         }
     }

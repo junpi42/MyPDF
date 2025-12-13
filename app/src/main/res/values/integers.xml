@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Valores para dispositivos pequeños (teléfonos) -->
-    <integer name="grid_min_columns">1</integer>
-    <integer name="grid_max_columns">4</integer>
-</resources>
-

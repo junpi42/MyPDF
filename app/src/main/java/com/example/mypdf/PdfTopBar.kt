@@ -3,13 +3,14 @@ package com.example.mypdf
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,18 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.*
 import androidx.compose.animation.*
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.AvTimer
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StyledTopBar(
     onBack: () -> Unit,
@@ -41,12 +38,7 @@ fun StyledTopBar(
     onTunerPositioned: (Rect) -> Unit = {},
     onConcertPositioned: (Rect) -> Unit = {},
     onBackPositioned: (Rect) -> Unit = {},
-    centerContent: @Composable () -> Unit = {},
-    showUndo: Boolean = false,
-    onUndo: () -> Unit = {},
-    metronomeOn: Boolean = false,
-    onMetronomeClick: () -> Unit = {},
-    onMetronomeLongClick: () -> Unit = {}
+    centerContent: @Composable () -> Unit = {}
 ) {
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -55,17 +47,16 @@ fun StyledTopBar(
     val height = if (isTablet) 80.dp else 64.dp
     val horizontalPadding = if (isTablet && isLandscape) 0.dp else 8.dp
     
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth().height(height),
-            shadowElevation = 4.dp
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth().height(height),
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
-            ) {
             // Back Button
             val backScale = if (highlightBack) {
                 val infiniteTransition = rememberInfiniteTransition(label = "backPulseScale")
@@ -121,8 +112,6 @@ fun StyledTopBar(
                 centerContent()
             }
 
-
-
             // Tuner Button
             IconButton(
                 onClick = onTunerClick,
@@ -152,40 +141,6 @@ fun StyledTopBar(
                 }
             }
 
-            // Metronome Button
-            Box(contentAlignment = Alignment.Center) {
-                // Usamos combinedClickable para soportar long press
-                // Necesitamos un Box contenedor porque IconButton no soporta onLongClick nativamente de forma fácil
-                Box(
-                    modifier = Modifier
-                        .size(height)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = onMetronomeClick,
-                            onLongClick = onMetronomeLongClick
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        androidx.compose.material.icons.Icons.Filled.AvTimer,
-                        contentDescription = s.metronomeDescription,
-                        tint = if (metronomeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
-                    )
-                }
-                
-                if (metronomeOn) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-8).dp, y = 8.dp)
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                }
-            }
-
             // Concert Mode Button
             IconButton(
                 onClick = onConcertClick,
@@ -203,24 +158,5 @@ fun StyledTopBar(
                 )
             }
         }
-    }
-
-        // Sombreado en el borde inferior para mayor diferenciación
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(12.dp)
-                .align(Alignment.BottomCenter)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Black.copy(alpha = 0.3f),
-                            Color.Black.copy(alpha = 0.15f),
-                            Color.Black.copy(alpha = 0.05f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
     }
 }

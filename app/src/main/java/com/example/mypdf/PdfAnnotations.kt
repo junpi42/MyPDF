@@ -7,8 +7,7 @@ data class DrawingPath(
     val points: List<Offset>,
     val color: Color,
     val strokeWidth: Float,
-    val isEraser: Boolean = false,
-    val pressures: List<Float> = List(points.size) { 1f } // Presión normalizada (0-1) por cada punto
+    val isEraser: Boolean = false
 )
 
 data class PageAnnotations(

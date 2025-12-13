@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Valores específicos para tablets (sw600dp) -->
-    <!-- Queremos que el valor mínimo del slider (posición máxima) deje 2 columnas por página -->
-    <integer name="grid_min_columns">2</integer>
-    <!-- Valor máximo de columnas en tablet (celdas más pequeñas) -->
-    <integer name="grid_max_columns">8</integer>
-</resources>
-
