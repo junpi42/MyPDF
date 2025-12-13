@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -79,8 +80,8 @@ private data class ViewerTutorialTargets(
 
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
-@Suppress("ComposeBoxWithConstraintsScopeUnused")
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Suppress("ComposeBoxWithConstraintsScopeUnused", "DEPRECATION", "EXPERIMENTAL_API_USAGE")
 @Composable
 fun PdfViewerScreen(
     deviceType: DeviceType,
@@ -427,21 +428,25 @@ fun PdfViewerScreen(
     // Función para activar/toggle la herramienta del stylus
     fun activateStylusButtonTool() {
         val targetTool = stylusButtonTool.toToolString()
+        Log.d(TAG, "activateStylusButtonTool: targetTool=$targetTool, selectedTool=$selectedTool, previousTool=$previousTool")
 
         if (selectedTool == targetTool) {
             // Si YA estás usando la herramienta del stylus,
             // presionar el botón te vuelve a la herramienta anterior
             selectedTool = previousTool
+            Log.d(TAG, "Stylus button: volviendo a previousTool=$previousTool")
         } else {
             // Si NO estás usando la herramienta del stylus,
             // presionar el botón te cambia a ella y guarda la anterior
             previousTool = selectedTool
             selectedTool = targetTool
+            Log.d(TAG, "Stylus button: cambiando a targetTool=$targetTool")
         }
     }
 
     // Función para manejar la pulsación del botón del stylus (desde el pen físico)
     val handleStylusButtonPress: () -> Unit = {
+        Log.d(TAG, "handleStylusButtonPress INVOCADO")
         activateStylusButtonTool()
     }
 
@@ -787,6 +792,29 @@ fun PdfViewerScreen(
                     val width = with(density) { maxWidth.toPx() }
                     val height = with(density) { maxHeight.toPx() }
 
+                    // Detectar botón del stylus globalmente
+                    var stylusButtonWasPressed by remember { mutableStateOf(false) }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInteropFilter { event ->
+                                // Detectar botón del stylus globalmente
+                                if (event.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_STYLUS) {
+                                    val buttonPressed = (event.buttonState and android.view.MotionEvent.BUTTON_STYLUS_PRIMARY) != 0 ||
+                                                      (event.buttonState and android.view.MotionEvent.BUTTON_STYLUS_SECONDARY) != 0
+
+                                    // Detectar transición de no-presionado a presionado
+                                    if (buttonPressed && !stylusButtonWasPressed) {
+                                        Log.d(TAG, "Botón del stylus DETECTADO GLOBALMENTE - ejecutando activateStylusButtonTool")
+                                        activateStylusButtonTool()
+                                    }
+                                    stylusButtonWasPressed = buttonPressed
+                                }
+                                false
+                            }
+                    ) {
+
                     if (deviceType == DeviceType.PHONE) {
                         PdfEditModePhone(
                             listState = listState,
@@ -963,6 +991,7 @@ fun PdfViewerScreen(
                             onEraserRadiusChange = { eraserRadiusNorm = it.coerceIn(0.015f, 0.1f) }
                         )
                     }
+                    }
                 }
             }
 
@@ -1121,7 +1150,7 @@ private fun PdfEditModeTablet(
     ) {
         LazyColumn(
             state = listState,
-            userScrollEnabled = !isPinching,
+            userScrollEnabled = !isPinching && selectedTool == "none",
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
@@ -1387,7 +1416,7 @@ private fun PdfEditModePhone(
             ) {
                 LazyColumn(
                     state = listState,
-                    userScrollEnabled = !isPinching,
+                    userScrollEnabled = !isPinching && selectedTool == "none",
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(

@@ -1,6 +1,7 @@
 package com.example.mypdf
 
 import android.graphics.Bitmap
+import android.util.Log
 import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -138,6 +139,7 @@ fun PdfPageItem(
                     if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
                         // Primera vez que se detecta un stylus
                         if (!stylusWasDetected) {
+                            Log.d("PdfPageItem", "Stylus detectado por primera vez")
                             onStylusDetected()
                             stylusWasDetected = true
                         }
@@ -148,6 +150,7 @@ fun PdfPageItem(
 
                         // Detectar transición de no-presionado a presionado
                         if (buttonPressed && !stylusButtonWasPressed) {
+                            Log.d("PdfPageItem", "Botón del stylus PRESIONADO - llamando onStylusButtonPressed")
                             onStylusButtonPressed()
                         }
                         stylusButtonWasPressed = buttonPressed

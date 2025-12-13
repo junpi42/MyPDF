@@ -1,5 +1,6 @@
 package com.example.mypdf
 
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -82,6 +83,9 @@ fun StyledLeftToolBar(
     val config = LocalConfiguration.current
     val isTablet = config.screenWidthDp > 600
     val density = LocalDensity.current
+
+    // Log para depuración
+    Log.d("PdfToolbar", "StyledLeftToolBar recompuesto con selectedTool=$selectedTool")
 
     // Estado para el diálogo de selección de herramienta del stylus
     var showStylusToolDialog by remember { mutableStateOf(false) }
@@ -200,7 +204,10 @@ fun StyledLeftToolBar(
                     icon = Icons.Default.Gesture,
                     label = "Stylus Button",
                     selected = false,
-                    onClick = onStylusButtonClick, // Click normal: activa/toggle la herramienta
+                    onClick = {
+                        Log.d("PdfToolbar", "Botón Stylus UI CLICKEADO - llamando onStylusButtonClick")
+                        onStylusButtonClick()
+                    },
                     onLongClick = { showStylusToolDialog = true }, // Long press: abre menú de selección
                     size = buttonSize,
                     iconSize = iconSize
