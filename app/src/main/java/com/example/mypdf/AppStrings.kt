@@ -1,8 +1,8 @@
 package com.example.mypdf
 
-import com.example.mypdf.Language
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.example.mypdf.Language
 
 /**
  * Modelo de textos de la app. Añade aquí las claves que necesites.
@@ -65,8 +65,6 @@ interface AppStrings {
     val toolThick: String
     val toolSmooth: String
     val toolUndo: String
-    val stylusButtonTool: String
-    val strokeThicknessLabel: String
     
     // Onboarding
     val welcomeTitle: String
@@ -131,10 +129,6 @@ interface AppStrings {
     val tutorialTunerMenuBody: String
     val tutorialConcertModeTitle: String
     val tutorialConcertModeBody: String
-    val tutorialWinkDetectorTitle: String
-    val tutorialWinkDetectorBody: String
-    val tutorialWinkCalibrationTitle: String
-    val tutorialWinkCalibrationBody: String
     val tutorialExitConcertTitle: String
     val tutorialExitConcertBody: String
     val tutorialFinishedTitle: String
@@ -151,37 +145,6 @@ interface AppStrings {
     val eyeControlWaitingOpen: String
     val eyeControlPageChanged: String
     val eyeControlHelp: String
-    
-    // Calibration
-    val calibrationTitle: String
-    val calibrationCalibrated: String
-    val calibrationNotCalibrated: String
-    val calibrationButton: String
-    val recalibrationButton: String
-    val calibrationSubtitle: String
-    val resetButton: String
-    val resetSubtitle: String
-    val stepPreparation: String
-    val stepReady: String
-    val stepReadyDesc: String
-    val stepWinkLeft: String
-    val stepWinkLeftDesc: String
-    val stepWinkRight: String
-    val stepWinkRightDesc: String
-    val stepNormalEyes: String
-    val stepNormalEyesDesc: String
-    val stepComplete: String
-    val stepCompleteDesc: String
-    val stepCompleteSubDesc: String
-    val startCalibration: String
-    val eyeLeft: String
-    val eyeRight: String
-
-    // Metronome
-    val metronomeTitle: String
-    val metronomeTempo: String
-    val metronomeTimeSignature: String
-    val metronomeDescription: String
 }
 
 object StringsEs : AppStrings {
@@ -237,8 +200,6 @@ object StringsEs : AppStrings {
     override val toolThick = "Grueso"
     override val toolSmooth = "Suave"
     override val toolUndo = "Deshacer"
-    override val stylusButtonTool = "Herramienta del botón stylus"
-    override val strokeThicknessLabel = "Grosor"
     
     override val welcomeTitle = "Bienvenido"
     override val chooseLanguage = "Elige tu idioma"
@@ -292,63 +253,28 @@ object StringsEs : AppStrings {
     override val tutorialToolboxBody = "Aquí están tus herramientas de dibujo."
     override val tutorialTunerButtonTitle = "Afinador"
     override val tutorialTunerButtonBody = "Pulsa aquí para abrir el afinador."
-    override val tutorialTunerActiveTitle = "Afinador activo"
-    override val tutorialTunerActiveBody = "Usa las notas de referencia para afinar tu instrumento."
-    override val tutorialTunerMenuTitle = "Opciones del afinador"
-    override val tutorialTunerMenuBody = "Desde aquí puedes ajustar la frecuencia base y otros parámetros."
-    override val tutorialConcertModeTitle = "Modo concierto"
-    override val tutorialConcertModeBody = "Activa este modo para evitar toques accidentales durante la actuación."
-    override val tutorialWinkDetectorTitle = "Control por guiño"
-    override val tutorialWinkDetectorBody = "Puedes pasar de página guiñando un ojo."
-    override val tutorialWinkCalibrationTitle = "Calibrar guiños"
-    override val tutorialWinkCalibrationBody = "Sigue los pasos para que la app aprenda cómo guiñas."
-    override val tutorialExitConcertTitle = "Salir de concierto"
-    override val tutorialExitConcertBody = "Mantén pulsado para salir del modo concierto."
-    override val tutorialFinishedTitle = "Tutorial completado"
-    override val tutorialFinishedBody = "Ya sabes lo básico. ¡Disfruta de la app!"
-    override val tutorialStart = "Empezar tutorial"
-    override val tutorialSkip = "Saltar"
+    override val tutorialTunerActiveTitle = "Afinador Activo"
+    override val tutorialTunerActiveBody = "Toca el afinador para configurarlo."
+    override val tutorialTunerMenuTitle = "Ajustes del Afinador"
+    override val tutorialTunerMenuBody = "Pulsa aquí para configurar el afinador."
+    override val tutorialConcertModeTitle = "Modo Concierto"
+    override val tutorialConcertModeBody = "Activa el modo concierto para desactivar la edición."
+    override val tutorialExitConcertTitle = "Salir del Modo Concierto"
+    override val tutorialExitConcertBody = "Pulsa el botón de inicio para volver a editar."
+    override val tutorialFinishedTitle = "Tutorial Finalizado"
+    override val tutorialFinishedBody = "Puedes reactivarlo desde los ajustes."
+    override val tutorialStart = "Empezar"
+    override val tutorialSkip = "Omitir"
     override val tutorialExit = "Salir"
-
-    // Eye Control (Wink to turn page)
+    
+    // Eye Control
     override val eyeControlEnable = "Activar control por guiño"
     override val eyeControlDisable = "Desactivar control por guiño"
     override val eyeControlNoFace = "No se detecta tu cara. Asegúrate de estar frente a la cámara."
     override val eyeControlWinkDetected = "Guiño detectado, mantén cerrado..."
     override val eyeControlWaitingOpen = "¡Mantén! Ahora abre ambos ojos..."
     override val eyeControlPageChanged = "¡Página cambiada!"
-    override val eyeControlHelp = "Cierra un ojo 0.5 segundos y ábrelo para pasar página."
-
-    // Calibration
-    override val calibrationTitle = "Control por Guiño"
-    override val calibrationCalibrated = "✓ Calibrado"
-    override val calibrationNotCalibrated = "Sin calibrar - Usa valores predeterminados"
-    override val calibrationButton = "Calibrar"
-    override val recalibrationButton = "Recalibrar"
-    override val calibrationSubtitle = "Ajusta la detección a tus ojos"
-    override val resetButton = "Restablecer"
-    override val resetSubtitle = "Volver a valores predeterminados"
-    override val stepPreparation = "Preparación"
-    override val stepReady = "Listo para calibrar"
-    override val stepReadyDesc = "Posiciona tu cara frente a la cámara y pulsa Iniciar cuando estés listo"
-    override val stepWinkLeft = "Guiño izquierdo"
-    override val stepWinkLeftDesc = "Cierra solo el ojo izquierdo y mantén el derecho abierto"
-    override val stepWinkRight = "Guiño derecho"
-    override val stepWinkRightDesc = "Cierra solo el ojo derecho y mantén el izquierdo abierto"
-    override val stepNormalEyes = "Mira a la cámara"
-    override val stepNormalEyesDesc = "Mantén los dos ojos abiertos y la cabeza quieta"
-    override val stepComplete = "¡Completado!"
-    override val stepCompleteDesc = "Calibración exitosa"
-    override val stepCompleteSubDesc = "Tu perfil de detección ha sido guardado"
-    override val startCalibration = "Iniciar Calibración"
-    override val eyeLeft = "👁 Izq"
-    override val eyeRight = "👁 Der"
-
-    // Metronome
-    override val metronomeTitle = "Metrónomo"
-    override val metronomeTempo = "Tempo"
-    override val metronomeTimeSignature = "Compás"
-    override val metronomeDescription = "Metrónomo"
+    override val eyeControlHelp = "Cierra un ojo 2 segundos y ábrelo para pasar página."
 }
 
 object StringsEn : AppStrings {
@@ -404,8 +330,6 @@ object StringsEn : AppStrings {
     override val toolThick = "Thick"
     override val toolSmooth = "Smooth"
     override val toolUndo = "Undo"
-    override val stylusButtonTool = "Stylus button tool"
-    override val strokeThicknessLabel = "Thickness"
 
     override val welcomeTitle = "Welcome"
     override val chooseLanguage = "Choose your language"
@@ -460,20 +384,16 @@ object StringsEn : AppStrings {
     override val tutorialTunerButtonTitle = "Tuner"
     override val tutorialTunerButtonBody = "Click here to open the tuner."
     override val tutorialTunerActiveTitle = "Tuner Active"
-    override val tutorialTunerActiveBody = "Use reference notes to tune your instrument."
+    override val tutorialTunerActiveBody = "Tap the tuner to configure it."
     override val tutorialTunerMenuTitle = "Tuner Settings"
-    override val tutorialTunerMenuBody = "Adjust base frequency and other settings here."
+    override val tutorialTunerMenuBody = "Click here to configure the tuner."
     override val tutorialConcertModeTitle = "Concert Mode"
-    override val tutorialConcertModeBody = "Enable this mode to prevent accidental touches during performance."
-    override val tutorialWinkDetectorTitle = "Wink Control"
-    override val tutorialWinkDetectorBody = "Turn pages by winking an eye."
-    override val tutorialWinkCalibrationTitle = "Calibrate Wink"
-    override val tutorialWinkCalibrationBody = "Follow steps to let the app learn how you wink."
-    override val tutorialExitConcertTitle = "Exit Concert"
-    override val tutorialExitConcertBody = "Long press to exit concert mode."
+    override val tutorialConcertModeBody = "Enable concert mode to disable editing."
+    override val tutorialExitConcertTitle = "Exit Concert Mode"
+    override val tutorialExitConcertBody = "Tap the home button to return to editing."
     override val tutorialFinishedTitle = "Tutorial Finished"
-    override val tutorialFinishedBody = "You know the basics. Enjoy the app!"
-    override val tutorialStart = "Start Tutorial"
+override val tutorialFinishedBody = "You can reactivate it from the settings."
+    override val tutorialStart = "Start"
     override val tutorialSkip = "Skip"
     override val tutorialExit = "Exit"
     
@@ -484,38 +404,7 @@ object StringsEn : AppStrings {
     override val eyeControlWinkDetected = "Wink detected, keep it closed..."
     override val eyeControlWaitingOpen = "Hold! Now open both eyes..."
     override val eyeControlPageChanged = "Page changed!"
-    override val eyeControlHelp = "Close one eye for 0.5 seconds and open it to turn the page."
-
-    // Calibration
-    override val calibrationTitle = "Wink Control"
-    override val calibrationCalibrated = "✓ Calibrated"
-    override val calibrationNotCalibrated = "Not calibrated - Using default values"
-    override val calibrationButton = "Calibrate"
-    override val recalibrationButton = "Recalibrate"
-    override val calibrationSubtitle = "Adjust detection to your eyes"
-    override val resetButton = "Reset"
-    override val resetSubtitle = "Return to default values"
-    override val stepPreparation = "Preparation"
-    override val stepReady = "Ready to calibrate"
-    override val stepReadyDesc = "Position your face in front of the camera and press Start when ready"
-    override val stepWinkLeft = "Left wink"
-    override val stepWinkLeftDesc = "Close only your left eye and keep the right one open"
-    override val stepWinkRight = "Right wink"
-    override val stepWinkRightDesc = "Close only your right eye and keep the left one open"
-    override val stepNormalEyes = "Look at the camera"
-    override val stepNormalEyesDesc = "Keep both eyes open and your head still"
-    override val stepComplete = "Completed!"
-    override val stepCompleteDesc = "Calibration successful"
-    override val stepCompleteSubDesc = "Your detection profile has been saved"
-    override val startCalibration = "Start Calibration"
-    override val eyeLeft = "👁 Left"
-    override val eyeRight = "👁 Right"
-
-    // Metronome
-    override val metronomeTitle = "Metronome"
-    override val metronomeTempo = "Tempo"
-    override val metronomeTimeSignature = "Time Signature"
-    override val metronomeDescription = "Metronome"
+    override val eyeControlHelp = "Close one eye for 2 seconds and open it to turn the page."
 }
 
 object StringsFr : AppStrings {
@@ -571,8 +460,6 @@ object StringsFr : AppStrings {
     override val toolThick = "Épais"
     override val toolSmooth = "Lisser"
     override val toolUndo = "Annuler"
-    override val stylusButtonTool = "Outil du bouton stylus"
-    override val strokeThicknessLabel = "Épaisseur"
 
     override val welcomeTitle = "Bienvenue"
     override val chooseLanguage = "Choisissez votre langue"
@@ -626,21 +513,17 @@ object StringsFr : AppStrings {
     override val tutorialToolboxBody = "Voici vos outils de dessin."
     override val tutorialTunerButtonTitle = "Accordeur"
     override val tutorialTunerButtonBody = "Cliquez ici pour ouvrir l'accordeur."
-    override val tutorialTunerActiveTitle = "Accordeur actif"
-    override val tutorialTunerActiveBody = "Utilisez les notes de référence pour accorder votre instrument."
-    override val tutorialTunerMenuTitle = "Options de l'accordeur"
-    override val tutorialTunerMenuBody = "Ajustez la fréquence de base et d'autres paramètres ici."
+    override val tutorialTunerActiveTitle = "Accordeur Actif"
+    override val tutorialTunerActiveBody = "Appuyez sur l'accordeur pour le configurer."
+    override val tutorialTunerMenuTitle = "Paramètres de l'accordeur"
+    override val tutorialTunerMenuBody = "Cliquez ici pour configurer l'accordeur."
     override val tutorialConcertModeTitle = "Mode Concert"
-    override val tutorialConcertModeBody = "Activez ce mode pour éviter les touches accidentelles pendant la performance."
-    override val tutorialWinkDetectorTitle = "Contrôle par clin d'œil"
-    override val tutorialWinkDetectorBody = "Tournez la page en faisant un clin d'œil."
-    override val tutorialWinkCalibrationTitle = "Calibrer les clins d'œil"
-    override val tutorialWinkCalibrationBody = "Suivez les étapes pour que l'application apprenne comment vous clignez des yeux."
-    override val tutorialExitConcertTitle = "Quitter le concert"
-    override val tutorialExitConcertBody = "Appuyez longuement pour quitter le mode concert."
-    override val tutorialFinishedTitle = "Tutoriel terminé"
-    override val tutorialFinishedBody = "Vous connaissez les bases. Profitez de l'application !"
-    override val tutorialStart = "Commencer le tutoriel"
+    override val tutorialConcertModeBody = "Activez le mode concert pour désactiver l'édition."
+    override val tutorialExitConcertTitle = "Quitter le Mode Concert"
+    override val tutorialExitConcertBody = "Appuyez sur le bouton d'accueil pour revenir à l'édition."
+    override val tutorialFinishedTitle = "Tutoriel Terminé"
+    override val tutorialFinishedBody = "Vous pouvez le réactiver depuis les paramètres."
+    override val tutorialStart = "Commencer"
     override val tutorialSkip = "Passer"
     override val tutorialExit = "Quitter"
     
@@ -651,38 +534,7 @@ object StringsFr : AppStrings {
     override val eyeControlWinkDetected = "Clin d'oeil détecté, gardez-le fermé..."
     override val eyeControlWaitingOpen = "Tenez! Maintenant ouvrez les deux yeux..."
     override val eyeControlPageChanged = "Page changée!"
-    override val eyeControlHelp = "Fermez un oeil pendant 0,5 seconde et ouvrez-le pour tourner la page."
-
-    // Calibration
-    override val calibrationTitle = "Contrôle par Clin d'œil"
-    override val calibrationCalibrated = "✓ Calibré"
-    override val calibrationNotCalibrated = "Non calibré - Utilisation des valeurs par défaut"
-    override val calibrationButton = "Calibrer"
-    override val recalibrationButton = "Recalibrer"
-    override val calibrationSubtitle = "Ajustez la détection à vos yeux"
-    override val resetButton = "Réinitialiser"
-    override val resetSubtitle = "Revenir aux valeurs par défaut"
-    override val stepPreparation = "Préparation"
-    override val stepReady = "Prêt à calibrer"
-    override val stepReadyDesc = "Positionnez votre visage devant la caméra et appuyez sur Démarrer"
-    override val stepWinkLeft = "Clin d'œil gauche"
-    override val stepWinkLeftDesc = "Fermez uniquement l'œil gauche et gardez le droit ouvert"
-    override val stepWinkRight = "Clin d'œil droit"
-    override val stepWinkRightDesc = "Fermez uniquement l'œil droit et gardez le gauche ouvert"
-    override val stepNormalEyes = "Regardez la caméra"
-    override val stepNormalEyesDesc = "Gardez les deux yeux ouverts et la tête immobile"
-    override val stepComplete = "Terminé !"
-    override val stepCompleteDesc = "Calibrage réussi"
-    override val stepCompleteSubDesc = "Votre profil de détection a été enregistré"
-    override val startCalibration = "Démarrer le Calibrage"
-    override val eyeLeft = "👁 G"
-    override val eyeRight = "👁 D"
-
-    // Metronome
-    override val metronomeTitle = "Métronome"
-    override val metronomeTempo = "Tempo"
-    override val metronomeTimeSignature = "Signature rythmique"
-    override val metronomeDescription = "Métronome"
+    override val eyeControlHelp = "Fermez un oeil pendant 2 secondes et ouvrez-le pour tourner la page."
 }
 
 object StringsIt : AppStrings {
@@ -735,11 +587,9 @@ object StringsIt : AppStrings {
     override val toolErase = "Gomma"
     override val toolThin = "Sottile"
     override val toolMedium = "Medio"
-    override val toolThick = " spesso"
+    override val toolThick = "Spesso"
     override val toolSmooth = "Liscio"
     override val toolUndo = "Annulla"
-    override val stylusButtonTool = "Strumento pulsante stylus"
-    override val strokeThicknessLabel = "Spessore"
 
     override val welcomeTitle = "Benvenuto"
     override val chooseLanguage = "Scegli la tua lingua"
@@ -793,21 +643,17 @@ object StringsIt : AppStrings {
     override val tutorialToolboxBody = "Ecco i tuoi strumenti di disegno."
     override val tutorialTunerButtonTitle = "Accordatore"
     override val tutorialTunerButtonBody = "Clicca qui per aprire l'accordatore."
-    override val tutorialTunerActiveTitle = "Accordatore attivo"
-    override val tutorialTunerActiveBody = "Usa le note di riferimento per accordare il tuo strumento."
-    override val tutorialTunerMenuTitle = "Opzioni accordatore"
-    override val tutorialTunerMenuBody = "Qui puoi regolare la frequenza di base e altri parametri."
-    override val tutorialConcertModeTitle = "Modalità concerto"
-    override val tutorialConcertModeBody = "Attiva questa modalità per evitare tocchi accidentali durante l'esibizione."
-    override val tutorialWinkDetectorTitle = "Controllo ammiccamento"
-    override val tutorialWinkDetectorBody = "Gira pagina facendo l'occhiolino."
-    override val tutorialWinkCalibrationTitle = "Calibra ammiccamento"
-    override val tutorialWinkCalibrationBody = "Segui i passaggi per far imparare all'app come fai l'occhiolino."
-    override val tutorialExitConcertTitle = "Esci dal concerto"
-    override val tutorialExitConcertBody = "Tieni premuto per uscire dalla modalità concerto."
-    override val tutorialFinishedTitle = "Tutorial completato"
-    override val tutorialFinishedBody = "Conosci le basi. Goditi l'app!"
-    override val tutorialStart = "Inizia tutorial"
+    override val tutorialTunerActiveTitle = "Accordatore Attivo"
+    override val tutorialTunerActiveBody = "Tocca l'accordatore per configurarlo."
+    override val tutorialTunerMenuTitle = "Impostazioni Accordatore"
+    override val tutorialTunerMenuBody = "Clicca qui per configurare l'accordatore."
+    override val tutorialConcertModeTitle = "Modalità Concerto"
+    override val tutorialConcertModeBody = "Attiva la modalità concerto per disabilitare la modifica."
+    override val tutorialExitConcertTitle = "Esci dalla Modalità Concerto"
+    override val tutorialExitConcertBody = "Tocca il pulsante home per tornare alla modifica."
+    override val tutorialFinishedTitle = "Tutorial Completato"
+    override val tutorialFinishedBody = "Puoi riattivarlo dalle impostazioni."
+    override val tutorialStart = "Inizia"
     override val tutorialSkip = "Salta"
     override val tutorialExit = "Esci"
     
@@ -818,44 +664,9 @@ object StringsIt : AppStrings {
     override val eyeControlWinkDetected = "Ammiccamento rilevato, tienilo chiuso..."
     override val eyeControlWaitingOpen = "Tieni! Ora apri entrambi gli occhi..."
     override val eyeControlPageChanged = "Pagina cambiata!"
-    override val eyeControlHelp = "Chiudi un occhio per 0,5 secondi e aprilo per girare pagina."
-
-    // Calibration
-    override val calibrationTitle = "Controllo Ammiccamento"
-    override val calibrationCalibrated = "✓ Calibrato"
-    override val calibrationNotCalibrated = "Non calibrato - Valori predefiniti"
-    override val calibrationButton = "Calibra"
-    override val recalibrationButton = "Ricalibra"
-    override val calibrationSubtitle = "Regola la rilevazione per i tuoi occhi"
-    override val resetButton = "Ripristina"
-    override val resetSubtitle = "Torna ai valori predefiniti"
-    override val stepPreparation = "Preparazione"
-    override val stepReady = "Pronto per calibrare"
-    override val stepReadyDesc = "Posiziona il viso davanti alla fotocamera e premi Avvia"
-    override val stepWinkLeft = "Ammiccamento sinistro"
-    override val stepWinkLeftDesc = "Chiudi solo l'occhio sinistro e tieni aperto il destro"
-    override val stepWinkRight = "Ammiccamento destro"
-    override val stepWinkRightDesc = "Chiudi solo l'occhio destro e tieni aperto il sinistro"
-    override val stepNormalEyes = "Guarda la fotocamera"
-    override val stepNormalEyesDesc = "Tieni entrambi gli occhi aperti e la testa ferma"
-    override val stepComplete = "Completato!"
-    override val stepCompleteDesc = "Calibrazione riuscita"
-    override val stepCompleteSubDesc = "Il tuo profilo di rilevamento è stato salvato"
-    override val startCalibration = "Avvia Calibrazione"
-    override val eyeLeft = "👁 Sx"
-    override val eyeRight = "👁 Dx"
-
-    // Metronome
-    override val metronomeTitle = "Metronomo"
-    override val metronomeTempo = "Tempo"
-    override val metronomeTimeSignature = "Tempo"
-    override val metronomeDescription = "Metronomo"
+    override val eyeControlHelp = "Chiudi un occhio per 2 secondi e aprilo per girare pagina."
 }
 
-
-
-
-// Selección de textos en función de un código de idioma simple (por ejemplo: "EN", "ES", "FR", "IT").
 fun stringsFor(language: Language): AppStrings {
     return when (language) {
         Language.EN -> StringsEn
@@ -870,12 +681,7 @@ val LocalStrings = staticCompositionLocalOf<AppStrings> {
 }
 
 @Composable
-fun ProvideStrings(languageCode: String, content: @Composable () -> Unit) {
-    val language = try {
-        Language.valueOf(languageCode)
-    } catch (e: IllegalArgumentException) {
-        Language.EN
-    }
+fun ProvideStrings(language: Language, content: @Composable () -> Unit) {
     val strings = stringsFor(language)
     androidx.compose.runtime.CompositionLocalProvider(LocalStrings provides strings) {
         content()

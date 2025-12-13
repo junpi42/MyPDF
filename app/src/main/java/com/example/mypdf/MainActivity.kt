@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.*
@@ -82,7 +83,7 @@ class MainActivity : ComponentActivity() {
             // State initialized from settings or defaults
             var darkMode by remember { mutableStateOf(initialSettings?.isDarkMode ?: false) }
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
-            var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
+            var gridScale by remember { mutableStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
 
@@ -101,9 +102,8 @@ class MainActivity : ComponentActivity() {
             }
 
             MyPDFTheme(darkTheme = darkMode) {
-                // Pasamos el código de idioma (EN, ES, FR, IT) a ProvideStrings
-                ProvideStrings(languageCode = language.name) {
-                     Surface(modifier = Modifier.fillMaxSize()) {
+                ProvideStrings(language = language) {
+                    Surface(modifier = Modifier.fillMaxSize()) {
                         val deviceType = rememberDeviceType()
                         if (showOnboarding) {
                             // Determine system language for initial onboarding
@@ -164,18 +164,12 @@ private fun AppRootAdaptive(
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
 
-    // Hoisted Tutorial State: guardamos solo el paso en savedState para sobrevivir rotaciones,
-    // y el targetRect en memoria normal (no es serializable)
-    var tutorialStep by rememberSaveable { mutableStateOf(if (!tutorialCompleted) TutorialStep.INTRO_DIALOG else TutorialStep.NONE) }
-    var tutorialTargetRect by remember { mutableStateOf<Rect?>(null) }
-
-    // Derivamos el TutorialState que se pasa a pantallas hijas
-    val tutorialState = TutorialState(step = tutorialStep, targetRect = tutorialTargetRect)
+    // Hoisted Tutorial State
+    var tutorialState by remember { mutableStateOf(TutorialState(step = if (!tutorialCompleted) TutorialStep.INTRO_DIALOG else TutorialStep.NONE)) }
 
     LaunchedEffect(tutorialCompleted) {
         if (tutorialCompleted) {
-            tutorialStep = TutorialStep.NONE
-            tutorialTargetRect = null
+            tutorialState = tutorialState.copy(step = TutorialStep.NONE)
         }
     }
 
@@ -199,12 +193,11 @@ private fun AppRootAdaptive(
                     tutorialCompleted = tutorialCompleted,
                     onTutorialComplete = {
                         onTutorialComplete()
-                        tutorialStep = TutorialStep.NONE
-                        tutorialTargetRect = null
+                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
                     },
                     onResetTutorial = onResetTutorial,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect }
+                    onTutorialStateChange = { tutorialState = it }
                 )
             } else {
                 PdfEditScreen(
@@ -216,11 +209,10 @@ private fun AppRootAdaptive(
                     onToggleDaltonic = onToggleDaltonic,
                     language = language,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
+                    onTutorialStateChange = { tutorialState = it },
                     onTutorialComplete = {
                         onTutorialComplete()
-                        tutorialStep = TutorialStep.NONE
-                        tutorialTargetRect = null
+                        tutorialState = tutorialState.copy(step = TutorialStep.NONE)
                     }
                 )
             }
@@ -512,7 +504,6 @@ fun LibraryScreen(
             thumbs = thumbs,
             columns = columns,
             onOpen = onOpen,
-            onFolderOpen = { folder -> selectedCategory = folder },
             notifyTutorialHint = { notifyTutorialHint(it) },
             tutorialsEnabled = tutorialsEnabled
         )
@@ -558,7 +549,6 @@ fun LibraryScreen(
             thumbs = thumbs,
             columns = columns,
             onOpen = onOpen,
-            onFolderOpen = { folder -> selectedCategory = folder },
             notifyTutorialHint = { notifyTutorialHint(it) },
             tutorialsEnabled = tutorialsEnabled
         )
@@ -749,9 +739,6 @@ fun LibraryScreen(
 
     // Settings Dialog (restored)
     if (showSettingsDialog) {
-        // Calcula las columnas actuales según el tamaño de pantalla y el gridScale/ baseMin
-        val currentColumns = columns.coerceAtLeast(1)
-
         SettingsDialog(
             isDarkMode = isDarkMode,
             onToggleDarkMode = onToggleDarkMode,
@@ -759,17 +746,8 @@ fun LibraryScreen(
             onToggleDaltonic = onToggleDaltonic,
             language = language,
             onLanguageChange = onLanguageChange,
-            gridColumns = currentColumns,
-            onColumnsChange = { newCols ->
-                // Convierte el número de columnas deseado a un gridScale aproximado
-                val cols = newCols.coerceAtLeast(1)
-                val newScale = try {
-                    ((screenWidthDp.toFloat() / cols.toFloat()) / baseMin.toFloat())
-                } catch (e: Exception) { gridScale }
-                // Limitar para mantener coherencia visual
-                val bounded = newScale.coerceIn(0.5f, 1.5f)
-                onGridScaleChange(bounded)
-            },
+            gridScale = gridScale,
+            onGridScaleChange = onGridScaleChange,
             onResetTutorial = {
                 onResetTutorial()
                 onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
@@ -1092,7 +1070,6 @@ private fun LibraryScreenPhone(
     thumbs: Map<File, Bitmap?>,
     columns: Int,
     onOpen: (File) -> Unit,
-    onFolderOpen: (File) -> Unit,
     notifyTutorialHint: (String) -> Unit,
     tutorialsEnabled: Boolean
 ) {
@@ -1240,7 +1217,7 @@ private fun LibraryScreenPhone(
                                 val folder = displayFolders[index]
                                 FolderItem(
                                     file = folder,
-                                    onClick = { onFolderOpen(folder) },
+                                    onClick = { onOpen(folder) },
                                     onLongClick = { onEditFile(folder, true) },
                                     s = s,
                                     sizeScale = gridScale
@@ -1317,7 +1294,6 @@ private fun LibraryScreenTablet(
     thumbs: Map<File, Bitmap?>,
     columns: Int,
     onOpen: (File) -> Unit,
-    onFolderOpen: (File) -> Unit,
     notifyTutorialHint: (String) -> Unit,
     tutorialsEnabled: Boolean
 ) {
@@ -1578,7 +1554,7 @@ private fun LibraryScreenTablet(
                                 val folder = showFolders[index]
                                 FolderItem(
                                     file = folder,
-                                    onClick = { onFolderOpen(folder) },
+                                    onClick = { onOpen(folder) },
                                     onLongClick = { onEditFile(folder, true) },
                                     s = s,
                                     sizeScale = gridScale
@@ -1740,3 +1716,4 @@ fun EmptyLibraryView(
         }
     }
 }
+

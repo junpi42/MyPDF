@@ -1,7 +1,6 @@
 package com.example.mypdf
 
 import androidx.compose.ui.res.painterResource
-import com.example.mypdf.Language
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -14,10 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,7 +23,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -41,7 +41,7 @@ private enum class OnboardingStep {
     Welcome,
     Login,
     Register,
-    SelectLanguage,
+    Language,
     Theme,
     Daltonic,
     Loading
@@ -53,15 +53,15 @@ fun OnboardingDialog(
     onFinish: (Language, Boolean, Boolean) -> Unit
 ) {
     // State for the onboarding flow
-    var currentLanguage by rememberSaveable { mutableStateOf(initialLanguage) }
-    var isDarkMode by rememberSaveable { mutableStateOf(false) }
-    var isDaltonic by rememberSaveable { mutableStateOf(false) }
-    var currentStep by rememberSaveable { mutableStateOf(OnboardingStep.Welcome) }
+    var currentLanguage by remember { mutableStateOf(initialLanguage) }
+    var isDarkMode by remember { mutableStateOf(false) }
+    var isDaltonic by remember { mutableStateOf(false) }
+    var currentStep by remember { mutableStateOf(OnboardingStep.Welcome) }
 
     // Registration/Login state
-    var username by rememberSaveable { mutableStateOf("") }
-    var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
 
     // We use a derived state for strings so they update immediately when language changes
     val s = stringsFor(currentLanguage)
@@ -102,29 +102,6 @@ fun OnboardingDialog(
             // Animated Background
             AnimatedGradientBackground(baseColor = baseColor)
 
-            // Botón X en la esquina superior derecha: grande y visible
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp),
-                contentAlignment = Alignment.TopEnd
-            ) {
-                IconButton(
-                    onClick = { onFinish(currentLanguage, isDarkMode, isDaltonic) },
-                    modifier = Modifier
-                        .size(56.dp)
-                        .border(width = 2.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f), shape = MaterialTheme.shapes.small)
-                        .background(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), shape = MaterialTheme.shapes.small)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Cerrar onboarding",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
             Column(
                 modifier = Modifier
                     .widthIn(max = 600.dp)
@@ -152,7 +129,7 @@ fun OnboardingDialog(
                                     s = s,
                                     onLogin = { currentStep = OnboardingStep.Login },
                                     onRegister = { currentStep = OnboardingStep.Register },
-                                    onGuest = { currentStep = OnboardingStep.SelectLanguage }
+                                    onGuest = { currentStep = OnboardingStep.Language }
                                 )
                             }
                             OnboardingStep.Login -> {
@@ -263,7 +240,7 @@ fun OnboardingDialog(
                                     )
                                 }
                                 Button(
-                                    onClick = { currentStep = OnboardingStep.SelectLanguage }, // Continue to settings
+                                    onClick = { currentStep = OnboardingStep.Language }, // Continue to settings
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(25.dp)
                                 ) {
@@ -276,7 +253,7 @@ fun OnboardingDialog(
                                     Text(s.backDescription)
                                 }
                             }
-                            OnboardingStep.SelectLanguage -> {
+                            OnboardingStep.Language -> {
                                 Text(
                                     text = s.chooseLanguage,
                                     style = MaterialTheme.typography.headlineSmall,
@@ -410,7 +387,7 @@ fun OnboardingDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = "${s.welcomeUser} $username",
+                                    text = "${s.welcomeUser} ${if (username.isNotEmpty()) username else ""}",
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     textAlign = TextAlign.Center
@@ -427,7 +404,7 @@ fun OnboardingDialog(
                 }
 
                 // Persistent Disclaimer (only show on settings steps)
-                if (currentStep == OnboardingStep.SelectLanguage || currentStep == OnboardingStep.Theme || currentStep == OnboardingStep.Daltonic) {
+                if (currentStep == OnboardingStep.Language || currentStep == OnboardingStep.Theme || currentStep == OnboardingStep.Daltonic) {
                     Text(
                         text = s.onboardingDisclaimer,
                         style = MaterialTheme.typography.bodySmall,
@@ -456,7 +433,7 @@ fun AnimatedGradientBackground(baseColor: Color) {
         label = "t"
     )
 
-
+    val color1 = baseColor
     val color2 = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
 
     // Animate gradient center
@@ -468,7 +445,7 @@ fun AnimatedGradientBackground(baseColor: Color) {
             .fillMaxSize()
             .background(
                 brush = Brush.radialGradient(
-                    colors = listOf(color2, baseColor),
+                    colors = listOf(color2, color1),
                     center = Offset(x * 2000f, y * 2000f), // Approximate screen size scaling
                     radius = 1500f
                 )
