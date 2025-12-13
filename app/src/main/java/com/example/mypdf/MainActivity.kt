@@ -512,6 +512,7 @@ fun LibraryScreen(
             thumbs = thumbs,
             columns = columns,
             onOpen = onOpen,
+            onFolderOpen = { folder -> selectedCategory = folder },
             notifyTutorialHint = { notifyTutorialHint(it) },
             tutorialsEnabled = tutorialsEnabled
         )
@@ -557,6 +558,7 @@ fun LibraryScreen(
             thumbs = thumbs,
             columns = columns,
             onOpen = onOpen,
+            onFolderOpen = { folder -> selectedCategory = folder },
             notifyTutorialHint = { notifyTutorialHint(it) },
             tutorialsEnabled = tutorialsEnabled
         )
@@ -1090,6 +1092,7 @@ private fun LibraryScreenPhone(
     thumbs: Map<File, Bitmap?>,
     columns: Int,
     onOpen: (File) -> Unit,
+    onFolderOpen: (File) -> Unit,
     notifyTutorialHint: (String) -> Unit,
     tutorialsEnabled: Boolean
 ) {
@@ -1237,7 +1240,7 @@ private fun LibraryScreenPhone(
                                 val folder = displayFolders[index]
                                 FolderItem(
                                     file = folder,
-                                    onClick = { onOpen(folder) },
+                                    onClick = { onFolderOpen(folder) },
                                     onLongClick = { onEditFile(folder, true) },
                                     s = s,
                                     sizeScale = gridScale
@@ -1314,6 +1317,7 @@ private fun LibraryScreenTablet(
     thumbs: Map<File, Bitmap?>,
     columns: Int,
     onOpen: (File) -> Unit,
+    onFolderOpen: (File) -> Unit,
     notifyTutorialHint: (String) -> Unit,
     tutorialsEnabled: Boolean
 ) {
@@ -1574,7 +1578,7 @@ private fun LibraryScreenTablet(
                                 val folder = showFolders[index]
                                 FolderItem(
                                     file = folder,
-                                    onClick = { onOpen(folder) },
+                                    onClick = { onFolderOpen(folder) },
                                     onLongClick = { onEditFile(folder, true) },
                                     s = s,
                                     sizeScale = gridScale
