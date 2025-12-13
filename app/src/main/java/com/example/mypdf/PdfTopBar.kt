@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,7 +47,9 @@ fun StyledTopBar(
     onUndo: () -> Unit = {},
     metronomeOn: Boolean = false,
     onMetronomeClick: () -> Unit = {},
-    onMetronomeLongClick: () -> Unit = {}
+    onMetronomeLongClick: () -> Unit = {},
+    isCloudConnected: Boolean = false,
+    onCloudClick: () -> Unit = {}
 ) {
     val s = strings()
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -123,6 +126,21 @@ fun StyledTopBar(
 
 
 
+            // Cloud Button
+            IconButton(
+                onClick = onCloudClick,
+                modifier = Modifier.size(height)
+            ) {
+                 val icon = if (isCloudConnected) androidx.compose.material.icons.Icons.Default.Cloud else androidx.compose.material.icons.Icons.Default.Cloud
+                 val tint = if (isCloudConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                 Icon(
+                     icon,
+                     contentDescription = "Cloud Sync",
+                     tint = tint,
+                     modifier = Modifier.size(24.dp * (if (isTablet) 1.5f else 1f))
+                 )
+            }
+
             // Tuner Button
             IconButton(
                 onClick = onTunerClick,
@@ -197,7 +215,7 @@ fun StyledTopBar(
             ) {
                 Icon(
                     Icons.Default.PlayArrow,
-                    contentDescription = s.concertDescription,
+                    contentDescription = s.concertDescription, // Assuming s.concertDescription exists
                     tint = if (concertModeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(32.dp * (if (isTablet) 1.5f else 1f))
                 )

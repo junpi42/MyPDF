@@ -41,6 +41,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import com.example.mypdf.ui.theme.MyPDFTheme
 
 // PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 // <<< PERF IMPORTS <<<
 
 // --- Helpers que faltaban ---
@@ -73,9 +75,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val context = LocalContext.current
+            val activityContext = LocalContext.current
             // Load settings or null if missing
-            val initialSettings = remember { SettingsManager.loadSettings(context) }
+            val initialSettings = remember { SettingsManager.loadSettings(activityContext) }
             
             var showOnboarding by remember { mutableStateOf(initialSettings == null) }
             
@@ -89,7 +91,7 @@ class MainActivity : ComponentActivity() {
             // Helper to save settings
             fun save() {
                 SettingsManager.saveSettings(
-                    context,
+                    activityContext,
                     AppSettings(
                         language = if (language == Language.ES) "ES" else "EN",
                         isDarkMode = darkMode,
@@ -161,6 +163,7 @@ private fun AppRootAdaptive(
     onTutorialComplete: () -> Unit,
     onResetTutorial: () -> Unit
 ) {
+    val context = LocalContext.current
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
 
@@ -178,6 +181,21 @@ private fun AppRootAdaptive(
             tutorialTargetRect = null
         }
     }
+
+    // Google Sign-In Logic (Hoisted)
+    val googleAccount = remember { mutableStateOf(context.let { com.example.mypdf.data.GoogleDriveManager.getSignedInAccount(it) }) }
+    val authLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+        onResult = { result ->
+            val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                googleAccount.value = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+                Toast.makeText(context, "Signed in as ${googleAccount.value?.email}", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Sign in failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -204,9 +222,19 @@ private fun AppRootAdaptive(
                     },
                     onResetTutorial = onResetTutorial,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect }
+                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
+                    googleAccount = googleAccount.value,
+                    onSignIn = { authLauncher.launch(com.example.mypdf.data.GoogleDriveManager.getSignInIntent(context)) },
+                    onSignOut = {
+                        com.example.mypdf.data.GoogleDriveManager.signOut(context) {
+                            googleAccount.value = null
+                            Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 )
             } else {
+// Auth logic removed (hoisted)
+
                 PdfEditScreen(
                     deviceType = deviceType,
                     file = selectedFile,
@@ -221,6 +249,14 @@ private fun AppRootAdaptive(
                         onTutorialComplete()
                         tutorialStep = TutorialStep.NONE
                         tutorialTargetRect = null
+                    },
+                    googleAccount = googleAccount.value,
+                    onSignIn = { authLauncher.launch(com.example.mypdf.data.GoogleDriveManager.getSignInIntent(context)) },
+                    onSignOut = {
+                        com.example.mypdf.data.GoogleDriveManager.signOut(context) {
+                            googleAccount.value = null
+                            Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -251,7 +287,10 @@ fun LibraryScreen(
     onTutorialComplete: () -> Unit,
     onResetTutorial: () -> Unit,
     tutorialState: TutorialState,
-    onTutorialStateChange: (TutorialState) -> Unit
+    onTutorialStateChange: (TutorialState) -> Unit,
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -442,6 +481,16 @@ fun LibraryScreen(
     LaunchedEffect(Unit) { refreshCategories() }
     LaunchedEffect(selectedCategory) { loadCategory(selectedCategory) }
     LaunchedEffect(query) { searchEverywhere(query) }
+    
+    // Auto-Sync
+    LaunchedEffect(googleAccount) {
+        if (googleAccount != null) {
+            com.example.mypdf.data.SyncManager.syncAll(context, googleAccount)
+            refreshCategories()
+            loadCategory(selectedCategory) // Refresh current view
+            Toast.makeText(context, "Cloud Sync Complete", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -731,6 +780,11 @@ fun LibraryScreen(
                                 fileToEdit?.deleteRecursively() == true
                             }
                             if (success) {
+                                val account = googleAccount
+                                if (account != null) {
+                                    val fileName = fileToEdit?.name ?: ""
+                                    com.example.mypdf.data.GoogleDriveManager.deleteFile(context, account, fileName)
+                                }
                                 refreshCategories()
                                 loadCategory(selectedCategory)
                             } else {
@@ -775,6 +829,10 @@ fun LibraryScreen(
                 onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
                 showSettingsDialog = false
             },
+
+            googleAccount = googleAccount,
+            onSignIn = onSignIn,
+            onSignOut = onSignOut,
             onDismiss = { showSettingsDialog = false }
         )
     }

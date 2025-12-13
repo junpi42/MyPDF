@@ -38,6 +38,13 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/INDEX.LIST"
+        }
+    }
 }
 
 // build.gradle.kts
@@ -60,6 +67,12 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // --- GOOGLE SIGN-IN & DRIVE ---
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("com.google.api-client:google-api-client-android:2.6.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20240521-2.0.0")
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.24.0")
 
     // Agrego los iconos de Material (necesarios para androidx.compose.material.icons.*)
     implementation("androidx.compose.material:material-icons-extended")

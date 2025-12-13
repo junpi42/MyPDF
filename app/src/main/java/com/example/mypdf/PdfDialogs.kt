@@ -188,6 +188,9 @@ fun SettingsDialog(
     gridColumns: Int,
     onColumnsChange: (Int) -> Unit,
     onResetTutorial: () -> Unit,
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount? = null,
+    onSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val s = strings()
@@ -211,6 +214,49 @@ fun SettingsDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // Google Account
+                Column {
+                    Text("Google Account", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    if (googleAccount != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // User Avatar (placeholder for now if no coil)
+                             Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = googleAccount.givenName?.take(1) ?: "U",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(googleAccount.displayName ?: "User", style = MaterialTheme.typography.bodyLarge)
+                                Text(googleAccount.email ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = onSignOut,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Sign Out")
+                        }
+                    } else {
+                        Text("Sign in to sync your settings and files across devices.", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = onSignIn) {
+                            Text("Sign In with Google")
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 // Theme
                 Row(
                     modifier = Modifier.fillMaxWidth(),

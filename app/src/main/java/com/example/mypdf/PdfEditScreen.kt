@@ -14,7 +14,10 @@ fun PdfEditScreen(
     language: Language,
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
-    onTutorialComplete: () -> Unit
+    onTutorialComplete: () -> Unit,
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount? = null,
+    onSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {}
 ) {
     PdfViewerScreen(
         deviceType = deviceType,
@@ -26,6 +29,9 @@ fun PdfEditScreen(
         language = language,
         tutorialState = tutorialState,
         onTutorialStateChange = onTutorialStateChange,
-        onTutorialComplete = onTutorialComplete
+        onTutorialComplete = onTutorialComplete,
+        googleAccount = googleAccount,
+        onSignIn = onSignIn,
+        onSignOut = onSignOut
     )
 }

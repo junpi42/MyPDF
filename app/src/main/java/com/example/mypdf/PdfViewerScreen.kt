@@ -95,12 +95,16 @@ fun PdfViewerScreen(
     language: Language,
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
-    onTutorialComplete: () -> Unit
+    onTutorialComplete: () -> Unit,
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount? = null,
+    onSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
+    val account = googleAccount // Scope debug
 
     val tunner = remember { AudioTuner() }
 
@@ -114,6 +118,7 @@ fun PdfViewerScreen(
     var stylusLastSeenAt by remember { mutableLongStateOf(0L) }
     var enableStylusPressure by remember { mutableStateOf(true) }
 
+    // Cargar preferencias de stylus
     // Cargar preferencias de stylus
     LaunchedEffect(Unit) {
         runCatching {
@@ -182,6 +187,10 @@ fun PdfViewerScreen(
     // Calibration manager
     val calibrationManager = remember { EyeCalibrationManager(context) }
     var isCalibrated by remember { mutableStateOf(calibrationManager.loadCalibration().isCalibrated) }
+
+    // Cloud Sync State
+    // Cloud Sync State removed from Editor
+    // var cloudDialogState by remember { mutableStateOf(false) }
 
     // Tutorial Targets
     var tutorialTargets by remember { mutableStateOf(ViewerTutorialTargets()) }
@@ -1286,12 +1295,10 @@ private fun PdfEditModeTablet(
         val config = LocalConfiguration.current
         val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
         
-        Box(
-            modifier = Modifier
-                .fillMaxHeight(if (isPortrait) 0.75f else 1f)
-                .align(Alignment.CenterStart)
-        ) {
             StyledLeftToolBar(
+                modifier = Modifier
+                    .fillMaxHeight(if (isPortrait) 0.75f else 1f)
+                    .align(Alignment.CenterStart),
                 selectedTool = selectedTool,
                 paletteColors = paletteColors,
                 selectedPaletteIndex = selectedPaletteIndex,
@@ -1341,8 +1348,9 @@ private fun PdfEditModeTablet(
                 // Parámetros de presión capacitiva del stylus
                 enableStylusPressure = enableStylusPressure,
                 onEnableStylusPressureChange = { onEnableStylusPressureChange(it) }
+                // isCloudConnected removed
+                // onCloudClick removed
             )
-        }
 
         if (showColorPicker) {
             ColorPickerDialog(
@@ -1574,8 +1582,6 @@ private fun PdfEditModePhone(
                     TunerSettingsDialog(
                         tuner = tunner,
                         isDaltonic = isDaltonic,
-                        tunerExtendedMode = tunerExtendedMode,
-                        showTunerSettings = showTunerSettings,
                         onToggleDaltonic = onToggleDaltonic,
                         extendedMode = tunerExtendedMode,
                         onToggleExtendedMode = onToggleExtendedMode,

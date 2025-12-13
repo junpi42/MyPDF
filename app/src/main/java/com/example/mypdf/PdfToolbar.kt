@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,7 +81,9 @@ fun StyledLeftToolBar(
     onEraserRadiusChange: (Float) -> Unit = {},
     // Parámetro para presión capacitiva del stylus
     enableStylusPressure: Boolean = true,
-    onEnableStylusPressureChange: (Boolean) -> Unit = {}
+    onEnableStylusPressureChange: (Boolean) -> Unit = {},
+    isCloudConnected: Boolean = false,
+    onCloudClick: () -> Unit = {}
 ) {
     val s = strings()
     val config = LocalConfiguration.current
@@ -199,6 +202,26 @@ fun StyledLeftToolBar(
                 size = buttonSize,
                 iconSize = iconSize,
                 enabled = hasUndo
+            )
+            
+            // Cloud Button
+            val cloudIcon = androidx.compose.material.icons.Icons.Default.Cloud
+            val cloudLabel = if (isCloudConnected) "Cloud Connected" else "Cloud Sync"
+            val cloudTint = if (isCloudConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            
+            // Reusing StyledToolButton style but we need to handle tint manually if we want it distinct
+            // For now just allow it to use default styling but let's see if we can highlight it.
+            // StyledToolButton doesn't support custom tint easily unless selected.
+            // So we will use selected = isCloudConnected
+            
+            StyledToolButton(
+                icon = cloudIcon,
+                label = cloudLabel,
+                selected = isCloudConnected,
+                onClick = onCloudClick,
+                size = buttonSize,
+                iconSize = iconSize,
+                enabled = true
             )
 
             // Botón del Stylus - solo visible si se ha detectado un stylus
