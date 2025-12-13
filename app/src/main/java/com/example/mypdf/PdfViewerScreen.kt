@@ -112,7 +112,6 @@ fun PdfViewerScreen(
     var previousTool by remember { mutableStateOf("none") }
     var stylusLastSeenAt by remember { mutableLongStateOf(0L) }
     var enableStylusPressure by remember { mutableStateOf(true) }
-    var currentStylusPressure by remember { mutableFloatStateOf(0f) } // Presión en tiempo real
 
     // Cargar preferencias de stylus
     LaunchedEffect(Unit) {
@@ -127,8 +126,15 @@ fun PdfViewerScreen(
         }
     }
 
+    // Actualizar el timestamp cuando cambia enableStylusPressure para reiniciar el contador
+    LaunchedEffect(enableStylusPressure) {
+        if (stylusDetected && stylusLastSeenAt > 0L) {
+            stylusLastSeenAt = System.currentTimeMillis()
+        }
+    }
+
     // LaunchedEffect para resetear stylusDetected después de inactividad
-    LaunchedEffect(stylusLastSeenAt, stylusDetected) {
+    LaunchedEffect(stylusLastSeenAt, stylusDetected, enableStylusPressure) {
         if (stylusDetected && stylusLastSeenAt > 0L) {
             while (true) {
                 delay(1000L) // Verificar cada segundo
@@ -748,7 +754,9 @@ fun PdfViewerScreen(
                                 onErase = {},
                                 darkMode = darkMode,
                                 enableStylusPressure = enableStylusPressure,
-                                onPressureUpdate = { currentStylusPressure = it }
+                                onPressureUpdate = {
+                                    stylusLastSeenAt = System.currentTimeMillis()
+                                }
                             )
                             Spacer(Modifier.height(12.dp))
                         }
@@ -1059,7 +1067,9 @@ fun PdfViewerScreen(
                             // Parámetros de presión capacitiva
                             enableStylusPressure = enableStylusPressure,
                             onEnableStylusPressureChange = { enableStylusPressure = it },
-                            onPressureUpdate = { currentStylusPressure = it }
+                            onPressureUpdate = {
+                                stylusLastSeenAt = System.currentTimeMillis()
+                            }
                         )
                     }
                     }
@@ -1081,69 +1091,6 @@ fun PdfViewerScreen(
                 },
                 onDismiss = onTutorialComplete
             )
-
-            // Indicador visual de presión del stylus en tiempo real
-            if (stylusDetected && enableStylusPressure && currentStylusPressure > 0f) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(16.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = MaterialTheme.shapes.medium
-                        )
-                        .padding(12.dp)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(150.dp)
-                    ) {
-                        // Título
-                        Text(
-                            text = "Presión",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Barra de presión
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(20.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.surface,
-                                    shape = MaterialTheme.shapes.small
-                                )
-                        ) {
-                            // Relleno indicador de presión
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(currentStylusPressure)
-                                    .background(
-                                        color = when {
-                                            currentStylusPressure < 0.33f -> Color(0xFF4CAF50) // Verde
-                                            currentStylusPressure < 0.66f -> Color(0xFFFFC107) // Amarillo
-                                            else -> Color(0xFFFF5722) // Naranja/Rojo
-                                        },
-                                        shape = MaterialTheme.shapes.small
-                                    )
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Porcentaje
-                        Text(
-                            text = "${(currentStylusPressure * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-            }
         }
 
         // Metronome Settings Panel

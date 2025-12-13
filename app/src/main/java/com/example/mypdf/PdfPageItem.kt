@@ -363,17 +363,6 @@ fun PdfPageItem(
                     }
                 }
 
-                // Dibujar borrador con soporte de presión
-                if (selectedTool == "eraser" && currentPath.isNotEmpty()) {
-                    if (currentPath.size > 1) {
-                        // Borrador normal sin presión
-                        for (i in 0 until currentPath.size - 1) {
-                            val pt = toPx(currentPath[i + 1])
-                            val radius = eraserRadiusNorm * size.width / 2f
-                            drawCircle(color = Color.Red.copy(alpha = 0.3f), radius = radius, center = pt)
-                        }
-                    }
-                }
 
                 // Dibujar círculo del borrador
                 if (selectedTool == "eraser") {
