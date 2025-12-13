@@ -14,6 +14,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1573,6 +1574,8 @@ private fun PdfEditModePhone(
                     TunerSettingsDialog(
                         tuner = tunner,
                         isDaltonic = isDaltonic,
+                        tunerExtendedMode = tunerExtendedMode,
+                        showTunerSettings = showTunerSettings,
                         onToggleDaltonic = onToggleDaltonic,
                         extendedMode = tunerExtendedMode,
                         onToggleExtendedMode = onToggleExtendedMode,
@@ -1585,6 +1588,371 @@ private fun PdfEditModePhone(
 
 
     // moved helper functions to top-level below
+}
+
+@Composable
+private fun PdfEditModeTablet(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    isPinching: Boolean,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    pageCount: Int,
+    pageBitmaps: List<Bitmap?>,
+    annotations: Map<Int, PageAnnotations>,
+    selectedTool: String,
+    currentColor: Color,
+    markerStrokeWidth: Float,
+    eraserRadiusNorm: Float,
+    smoothingEnabled: Boolean,
+    onPathAdded: (Int, DrawingPath) -> Unit,
+    onErase: (Int, List<androidx.compose.ui.geometry.Offset>) -> Unit,
+    darkMode: Boolean,
+    paletteColors: List<Color>,
+    selectedPaletteIndex: Int,
+    highlighterStrokeWidth: Float,
+    showColorPicker: Boolean,
+    language: Language,
+    onBack: () -> Unit,
+    tunerOn: Boolean,
+    concertModeOn: Boolean,
+    onTunerClick: () -> Unit,
+    onConcertClick: () -> Unit,
+    tunner: AudioTuner,
+    isDaltonic: Boolean,
+    tunerExtendedMode: Boolean,
+    showTunerSettings: Boolean,
+    onToggleDaltonic: () -> Unit,
+    onToggleExtendedMode: () -> Unit,
+    onUpdateTutorialTarget: ((ViewerTutorialTargets) -> ViewerTutorialTargets) -> Unit,
+    onSelectTool: (String) -> Unit,
+    onPaletteSlotClicked: (Int) -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
+    onColorSelected: (Color) -> Unit,
+    onDismissColorPicker: () -> Unit,
+    onDismissTunerSettings: () -> Unit,
+    onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
+    onShowTunerSettings: () -> Unit
+) {
+    val topBarHeight = 64.dp
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = topBarHeight)
+            .then(
+                if (selectedTool == "none") {
+                    Modifier.pointerInput(selectedTool) {
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            onTransform(zoom, centroid, pan.x, pan.y)
+                        }
+                    }
+                } else Modifier
+            )
+    ) {
+        LazyColumn(
+            state = listState,
+            userScrollEnabled = !isPinching,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offsetX,
+                    translationY = offsetY
+                ),
+            contentPadding = PaddingValues(bottom = 16.dp)
+        ) {
+            items(count = pageCount) { index ->
+                val bmp = pageBitmaps.getOrNull(index)
+                PdfPageItem(
+                    index = index,
+                    bitmap = bmp,
+                    showLoadingLabel = bmp == null,
+                    editMode = true,
+                    annotations = annotations[index] ?: PageAnnotations(index),
+                    selectedTool = selectedTool,
+                    currentColor = currentColor,
+                    currentStrokeWidth = when (selectedTool) {
+                        "marker" -> markerStrokeWidth
+                        "highlighter" -> highlighterStrokeWidth
+                        else -> markerStrokeWidth
+                    },
+                    eraserRadiusNorm = eraserRadiusNorm,
+                    smoothingEnabled = smoothingEnabled,
+                    onPathAdded = { path -> onPathAdded(index, path) },
+                    onErase = { offsets -> onErase(index, offsets) },
+                    darkMode = darkMode
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+
+        // Barra lateral de herramientas sólo en modo edición
+        Box(
+            modifier = Modifier
+                .fillMaxHeight(0.75f)
+                .align(Alignment.CenterStart)
+        ) {
+            StyledLeftToolBar(
+                selectedTool = selectedTool,
+                paletteColors = paletteColors,
+                selectedPaletteIndex = selectedPaletteIndex,
+                strokeWidth = when (selectedTool) {
+                    "marker" -> markerStrokeWidth
+                    "highlighter" -> highlighterStrokeWidth
+                    "eraser" -> eraserRadiusNorm
+                    else -> 0f
+                },
+                smoothingEnabled = smoothingEnabled,
+                onSelectTool = onSelectTool,
+                onPaletteSlotClicked = onPaletteSlotClicked,
+                onStrokeChange = onStrokeChange,
+                onToggleSmoothing = onToggleSmoothing,
+                darkMode = darkMode,
+                language = language,
+                onToolboxPositioned = { rect -> onUpdateTutorialTarget { it.copy(toolbox = rect) } }
+            )
+        }
+
+        if (showColorPicker) {
+            ColorPickerDialog(
+                currentColor = currentColor,
+                onColorSelected = onColorSelected,
+                onDismiss = onDismissColorPicker
+            )
+        }
+        
+        if (showTunerSettings) {
+            TunerSettingsDialog(
+                tuner = tunner,
+                isDaltonic = isDaltonic,
+                onToggleDaltonic = onToggleDaltonic,
+                extendedMode = tunerExtendedMode,
+                onToggleExtendedMode = onToggleExtendedMode,
+                onDismiss = onDismissTunerSettings
+            )
+        }
+    }
+
+    // Barra superior completa con botón de volver y modo concierto
+    StyledTopBar(
+        onBack = onBack,
+        tunerOn = tunerOn,
+        concertModeOn = concertModeOn,
+        highlightBack = false,
+        onTunerClick = onTunerClick,
+        onConcertClick = onConcertClick,
+        darkMode = darkMode,
+        onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
+        onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
+        onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
+        centerContent = {
+            if (tunerOn) {
+                TunnerSmall(
+                    tunner = tunner,
+                    isDaltonic = isDaltonic,
+                    modifier = Modifier
+                        .then(if (tunerExtendedMode) Modifier.fillMaxWidth() else Modifier.fillMaxWidth(0.8f))
+                        .height(44.dp)
+                        .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
+                    onClick = onShowTunerSettings
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun PdfEditModePhone(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    isPinching: Boolean,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    pageCount: Int,
+    pageBitmaps: List<Bitmap?>,
+    annotations: Map<Int, PageAnnotations>,
+    selectedTool: String,
+    currentColor: Color,
+    markerStrokeWidth: Float,
+    eraserRadiusNorm: Float,
+    smoothingEnabled: Boolean,
+    onPathAdded: (Int, DrawingPath) -> Unit,
+    onErase: (Int, List<androidx.compose.ui.geometry.Offset>) -> Unit,
+    darkMode: Boolean,
+    paletteColors: List<Color>,
+    selectedPaletteIndex: Int,
+    highlighterStrokeWidth: Float,
+    showColorPicker: Boolean,
+    language: Language,
+    onBack: () -> Unit,
+    tunerOn: Boolean,
+    concertModeOn: Boolean,
+    onTunerClick: () -> Unit,
+    onConcertClick: () -> Unit,
+    tunner: AudioTuner,
+    isDaltonic: Boolean,
+    tunerExtendedMode: Boolean,
+    showTunerSettings: Boolean,
+    onToggleDaltonic: () -> Unit,
+    onToggleExtendedMode: () -> Unit,
+    onUpdateTutorialTarget: ((ViewerTutorialTargets) -> ViewerTutorialTargets) -> Unit,
+    onSelectTool: (String) -> Unit,
+    onPaletteSlotClicked: (Int) -> Unit,
+    onStrokeChange: (Float) -> Unit,
+    onToggleSmoothing: () -> Unit,
+    onColorSelected: (Color) -> Unit,
+    onDismissColorPicker: () -> Unit,
+    onDismissTunerSettings: () -> Unit,
+    onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
+    onShowTunerSettings: () -> Unit
+) {
+    val topBarHeight = 64.dp
+    Scaffold(
+        topBar = {
+            StyledTopBar(
+                onBack = onBack,
+                tunerOn = tunerOn,
+                concertModeOn = concertModeOn,
+                highlightBack = false,
+                onTunerClick = onTunerClick,
+                onConcertClick = onConcertClick,
+                darkMode = darkMode,
+                onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
+                onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
+                onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
+                centerContent = {
+                    if (tunerOn) {
+                        TunnerSmall(
+                            tunner = tunner,
+                            isDaltonic = isDaltonic,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
+                            onClick = onShowTunerSettings
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            // Bottom Toolbar for Phone
+            BottomAppBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                // Tools: Marker, Highlighter, Eraser
+                IconButton(onClick = { onSelectTool("marker") }) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Default.Edit,
+                        contentDescription = "Marker",
+                        tint = if (selectedTool == "marker") currentColor else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                IconButton(onClick = { onSelectTool("highlighter") }) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Default.Brush,
+                        contentDescription = "Highlighter",
+                        tint = if (selectedTool == "highlighter") currentColor else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                IconButton(onClick = { onSelectTool("eraser") }) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Default.Delete, // Or eraser icon
+                        contentDescription = "Eraser",
+                        tint = if (selectedTool == "eraser") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                
+                Spacer(Modifier.weight(1f))
+                
+                // Palette
+                paletteColors.forEachIndexed { index, color ->
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .padding(4.dp)
+                            .background(color = color, shape = androidx.compose.foundation.shape.CircleShape)
+                            .clickable { onPaletteSlotClicked(index) }
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .then(
+                    if (selectedTool == "none") {
+                        Modifier.pointerInput(selectedTool) {
+                            detectTransformGestures { centroid, pan, zoom, _ ->
+                                onTransform(zoom, centroid, pan.x, pan.y)
+                            }
+                        }
+                    } else Modifier
+                )
+        ) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !isPinching,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY
+                    ),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        darkMode = darkMode
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+            
+            if (showColorPicker) {
+                ColorPickerDialog(
+                    currentColor = currentColor,
+                    onColorSelected = onColorSelected,
+                    onDismiss = onDismissColorPicker
+                )
+            }
+            
+            if (showTunerSettings) {
+                TunerSettingsDialog(
+                    tuner = tunner,
+                    isDaltonic = isDaltonic,
+                    onToggleDaltonic = onToggleDaltonic,
+                    extendedMode = tunerExtendedMode,
+                    onToggleExtendedMode = onToggleExtendedMode,
+                    onDismiss = onDismissTunerSettings
+                )
+            }
+        }
+    }
 }
 
 private fun distancePointToSegment(

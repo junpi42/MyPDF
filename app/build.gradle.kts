@@ -13,7 +13,7 @@ android {
         applicationId = "com.example.mypdf"
         minSdk = 23
         targetSdk = 36
-        versionCode = 16
+        versionCode = 15
         versionName = "1.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
