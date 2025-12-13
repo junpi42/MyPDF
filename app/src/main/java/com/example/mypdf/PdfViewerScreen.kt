@@ -66,6 +66,7 @@ import com.example.mypdf.eyecontrol.CalibrationStep
 import com.example.mypdf.eyecontrol.EyeCalibrationFlow
 
 private const val TAG = "PDF_TIMING"
+private const val STYLUS_VISIBILITY_TIMEOUT_MS = 20_000L
 
 private data class ViewerTutorialTargets(
     val toolbox: Rect? = null,
@@ -75,6 +76,7 @@ private data class ViewerTutorialTargets(
     val backButton: Rect? = null,
     val winkButton: Rect? = null
 )
+
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -99,6 +101,15 @@ fun PdfViewerScreen(
 
     val tunner = remember { AudioTuner() }
 
+    // Stack de undo: hasta 7 snapshots
+    val undoStack = remember { mutableStateListOf<Map<Int, PageAnnotations>>() }
+
+    // Stylus state - nuevo sistema basado en detección por uso
+    var stylusDetected by remember { mutableStateOf(false) }
+    var stylusButtonTool by remember { mutableStateOf(StylusTool.MARKER) }
+    var previousTool by remember { mutableStateOf("none") }
+    var stylusLastSeenAt by remember { mutableLongStateOf(0L) }
+
     // ===== MODO DIA / NOCHE =====
     val darkMode = isDarkMode
 
@@ -112,12 +123,10 @@ fun PdfViewerScreen(
     var markerStrokeWidth by remember { mutableFloatStateOf(0.006f) }
     // highlighterStrokeWidth is for HIGHLIGHTER
     var highlighterStrokeWidth by remember { mutableFloatStateOf(0.02f) }
-    
+
     var eraserRadiusNorm by remember { mutableFloatStateOf(0.03f) }
     var smoothingEnabled by remember { mutableStateOf(true) }
     var showColorPicker by remember { mutableStateOf(false) }
-
-
 
     // afinador
     var tunerOn by remember { mutableStateOf(false) }
@@ -270,6 +279,7 @@ fun PdfViewerScreen(
         WindowCompat.setDecorFitsSystemWindows(activity.window, true)
         val controller = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
         controller.isAppearanceLightStatusBars = !darkMode
+        @Suppress("DEPRECATION")
         activity.window.statusBarColor =
             (if (darkMode) Color.Black else Color(0xFF111111)).toArgb()
 
@@ -350,8 +360,6 @@ fun PdfViewerScreen(
         File(file.parentFile, file.nameWithoutExtension + ".ann.json")
     }
     var saveJob by remember { mutableStateOf<Job?>(null) }
-    // Stack de undo: hasta 7 snapshots
-    val undoStack = remember { mutableStateListOf<Map<Int, PageAnnotations>>() }
 
     val scheduleSave: () -> Unit = {
         saveJob?.cancel()
@@ -414,6 +422,27 @@ fun PdfViewerScreen(
         }
         scheduleSave()
         return true
+    }
+
+    // Función para activar/toggle la herramienta del stylus
+    fun activateStylusButtonTool() {
+        val targetTool = stylusButtonTool.toToolString()
+
+        if (selectedTool == targetTool) {
+            // Si YA estás usando la herramienta del stylus,
+            // presionar el botón te vuelve a la herramienta anterior
+            selectedTool = previousTool
+        } else {
+            // Si NO estás usando la herramienta del stylus,
+            // presionar el botón te cambia a ella y guarda la anterior
+            previousTool = selectedTool
+            selectedTool = targetTool
+        }
+    }
+
+    // Función para manejar la pulsación del botón del stylus (desde el pen físico)
+    val handleStylusButtonPress: () -> Unit = {
+        activateStylusButtonTool()
     }
 
     // Tutorial Logic
@@ -493,7 +522,6 @@ fun PdfViewerScreen(
         }
     }
 
-    val topBarHeight = 64.dp
     val screenBg = MaterialTheme.colorScheme.background
     
     // Flag para controlar si estamos en medio de un gesto de borrado (para agrupar undo)
@@ -838,7 +866,9 @@ fun PdfViewerScreen(
                             },
                             onShowTunerSettings = { showTunerSettings = true },
                             onUndo = { undo() },
-                            hasUndo = undoStack.isNotEmpty()
+                            hasUndo = undoStack.isNotEmpty(),
+                            onStylusDetected = { stylusDetected = true },
+                            onStylusButtonPressed = handleStylusButtonPress
                         )
                     } else {
                         PdfEditModeTablet(
@@ -919,7 +949,18 @@ fun PdfViewerScreen(
                                 } else { scale = 1f; offsetX = 0f; offsetY = 0f }
                             },
                             onShowTunerSettings = { showTunerSettings = true },
-                            onUndo = { undo() }
+                            onUndo = { undo() },
+                            // Stylus parameters
+                            stylusDetected = stylusDetected,
+                            stylusButtonTool = stylusButtonTool,
+                            onStylusDetected = { stylusDetected = true },
+                            onStylusButtonClick = { activateStylusButtonTool() },
+                            onStylusButtonToolChange = { stylusButtonTool = it },
+                            onStylusButtonPressed = handleStylusButtonPress,
+                            // Callbacks para cambio de tamaño de herramientas
+                            onMarkerStrokeChange = { markerStrokeWidth = it },
+                            onHighlighterStrokeChange = { highlighterStrokeWidth = it },
+                            onEraserRadiusChange = { eraserRadiusNorm = it.coerceIn(0.015f, 0.1f) }
                         )
                     }
                 }
@@ -992,6 +1033,7 @@ fun PdfViewerScreen(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun PdfEditModeTablet(
     undoStack: List<Map<Int, PageAnnotations>>,
@@ -1025,6 +1067,10 @@ private fun PdfEditModeTablet(
     onConcertClick: () -> Unit,
     tunner: AudioTuner,
     isDaltonic: Boolean,
+    // Callbacks para cambio de tamaño de herramientas
+    onMarkerStrokeChange: (Float) -> Unit = {},
+    onHighlighterStrokeChange: (Float) -> Unit = {},
+    onEraserRadiusChange: (Float) -> Unit = {},
     tunerExtendedMode: Boolean,
     showTunerSettings: Boolean,
     onToggleDaltonic: () -> Unit,
@@ -1039,36 +1085,25 @@ private fun PdfEditModeTablet(
     onDismissTunerSettings: () -> Unit,
     onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
     onShowTunerSettings: () -> Unit,
-    onUndo: () -> Unit
+    onUndo: () -> Unit,
+    // Stylus parameters - nuevo sistema basado en detección por uso
+    stylusDetected: Boolean = false,
+    stylusButtonTool: StylusTool = StylusTool.MARKER,
+    onStylusDetected: () -> Unit = {},
+    onStylusButtonClick: () -> Unit = {},
+    onStylusButtonToolChange: (StylusTool) -> Unit = {},
+    onStylusButtonPressed: () -> Unit = {}
 ) {
     val topBarHeight = 64.dp
     val config = LocalConfiguration.current
     val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
-    val isLandscape = !isPortrait
-    val density = LocalDensity.current
-    
-    // Estado para el panel de ajustes del lápiz/highlighter
-    var showPencilSettingsPanel by remember { mutableStateOf(false) }
-    var settingsPanelToolType by remember { mutableStateOf("marker") }
-    
-    // Posición de la barra de herramientas para posicionar el panel
+
+    // Posición de la barra de herramientas para el tutorial
     var toolboxBounds by remember { mutableStateOf<Rect?>(null) }
     
-    // Posición de los botones individuales para alinear el panel con el botón pulsado
+    // Posición de los botones individuales
     var markerButtonBounds by remember { mutableStateOf<Rect?>(null) }
     var highlighterButtonBounds by remember { mutableStateOf<Rect?>(null) }
-    
-    // Cerrar el panel cuando se cambia de herramienta (excepto marker/highlighter)
-    LaunchedEffect(selectedTool) {
-        if (selectedTool != "marker" && selectedTool != "highlighter") {
-            showPencilSettingsPanel = false
-        }
-    }
-    
-    // Cerrar el panel cuando cambia la orientación
-    LaunchedEffect(isPortrait) {
-        showPencilSettingsPanel = false
-    }
     
     Box(
         modifier = Modifier
@@ -1118,7 +1153,9 @@ private fun PdfEditModeTablet(
                     onErase = { offsets -> onErase(index, offsets) },
                     onEraseStart = { onEraseStart(index) },
                     onEraseEnd = { onEraseEnd(index) },
-                    darkMode = darkMode
+                    darkMode = darkMode,
+                    onStylusDetected = onStylusDetected,
+                    onStylusButtonPressed = onStylusButtonPressed
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -1144,13 +1181,7 @@ private fun PdfEditModeTablet(
                     else -> 0f
                 },
                 smoothingEnabled = smoothingEnabled,
-                onSelectTool = { tool ->
-                    // Si se selecciona otra herramienta, cerrar el panel
-                    if (tool != "marker" && tool != "highlighter") {
-                        showPencilSettingsPanel = false
-                    }
-                    onSelectTool(tool)
-                },
+                onSelectTool = onSelectTool,
                 onPaletteSlotClicked = onPaletteSlotClicked,
                 onStrokeChange = onStrokeChange,
                 onToggleSmoothing = onToggleSmoothing,
@@ -1162,91 +1193,24 @@ private fun PdfEditModeTablet(
                 },
                 hasUndo = undoStack.isNotEmpty(),
                 onUndo = onUndo,
-                onMarkerLongPress = {
-                    settingsPanelToolType = "marker"
-                    showPencilSettingsPanel = true
-                },
-                onHighlighterLongPress = {
-                    settingsPanelToolType = "highlighter"
-                    showPencilSettingsPanel = true
-                },
+                onMarkerLongPress = { },
+                onHighlighterLongPress = { },
                 onMarkerButtonPositioned = { rect -> markerButtonBounds = rect },
                 onHighlighterButtonPositioned = { rect -> highlighterButtonBounds = rect },
-                showSlider = isPortrait // En landscape no mostramos el slider integrado
+                showSlider = false,
+                // Stylus parameters - nuevo sistema
+                stylusDetected = stylusDetected,
+                stylusButtonTool = stylusButtonTool,
+                onStylusButtonClick = onStylusButtonClick,
+                onStylusButtonToolChange = onStylusButtonToolChange,
+                // Parámetros para los popups de tamaño
+                markerStrokeWidth = markerStrokeWidth,
+                highlighterStrokeWidth = highlighterStrokeWidth,
+                eraserRadiusNorm = eraserRadiusNorm,
+                onMarkerStrokeChange = onMarkerStrokeChange,
+                onHighlighterStrokeChange = onHighlighterStrokeChange,
+                onEraserRadiusChange = onEraserRadiusChange
             )
-        }
-        
-        // Scrim transparente para cerrar el panel al tocar fuera
-        if (showPencilSettingsPanel) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        showPencilSettingsPanel = false
-                    }
-            )
-        }
-        
-        // Panel flotante de ajustes del lápiz/highlighter
-        toolboxBounds?.let { bounds ->
-            // Determinar el rect del botón con el que alinear el panel
-            val anchorRect: Rect = when (settingsPanelToolType) {
-                "marker" -> markerButtonBounds ?: bounds
-                "highlighter" -> highlighterButtonBounds ?: bounds
-                else -> bounds
-            }
-            
-            // Posición X: a la derecha de la barra de herramientas
-            val panelOffsetX = with(density) { bounds.right.toDp() + 8.dp }
-            
-            // Posición Y: centrada verticalmente con el botón pulsado
-            // El panel tiene aproximadamente 300dp de altura, así que restamos la mitad (~150dp)
-            val panelHeight = 300.dp
-            val buttonCenterY = (anchorRect.top + anchorRect.bottom) / 2
-            val panelOffsetY = with(density) { 
-                buttonCenterY.toDp() - (panelHeight / 2)
-            }.coerceAtLeast(16.dp)
-            
-            val currentStrokeWidth = when (settingsPanelToolType) {
-                "marker" -> markerStrokeWidth
-                "highlighter" -> highlighterStrokeWidth
-                else -> markerStrokeWidth
-            }
-            
-            val (minStroke, maxStroke) = when (settingsPanelToolType) {
-                "marker" -> 0.003f to 0.02f
-                "highlighter" -> 0.01f to 0.08f
-                else -> 0.003f to 0.02f
-            }
-            
-            Box(
-                modifier = Modifier
-                    .offset(x = panelOffsetX, y = panelOffsetY)
-                    .clickable(
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        // Consumir el click para que no cierre el panel
-                    }
-            ) {
-                PencilSettingsPanel(
-                    visible = showPencilSettingsPanel,
-                    toolType = settingsPanelToolType,
-                    paletteColors = paletteColors,
-                    selectedColorIndex = selectedPaletteIndex,
-                    strokeWidth = currentStrokeWidth,
-                    minStrokeWidth = minStroke,
-                    maxStrokeWidth = maxStroke,
-                    onColorSelected = { index ->
-                        onPaletteSlotClicked(index)
-                    },
-                    onStrokeWidthChanged = onStrokeChange,
-                    onDismiss = { showPencilSettingsPanel = false }
-                )
-            }
         }
 
         if (showColorPicker) {
@@ -1269,6 +1233,7 @@ private fun PdfEditModeTablet(
         }
     }
 }
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun PdfEditModePhone(
     listState: androidx.compose.foundation.lazy.LazyListState,
@@ -1316,9 +1281,11 @@ private fun PdfEditModePhone(
     onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
     onShowTunerSettings: () -> Unit,
     onUndo: () -> Unit,
-    hasUndo: Boolean
+    hasUndo: Boolean,
+    // Stylus parameters
+    onStylusDetected: () -> Unit = {},
+    onStylusButtonPressed: () -> Unit = {}
 ) {
-    val topBarHeight = 64.dp
     Scaffold(
         topBar = {
             StyledTopBar(
@@ -1362,21 +1329,21 @@ private fun PdfEditModePhone(
                 // Tools: Marker, Highlighter, Eraser
                 IconButton(onClick = { onSelectTool("marker") }) {
                     Icon(
-                        androidx.compose.material.icons.Icons.Default.Edit,
+                        Icons.Default.Edit,
                         contentDescription = "Marker",
                         tint = if (selectedTool == "marker") currentColor else MaterialTheme.colorScheme.onSurface
                     )
                 }
                 IconButton(onClick = { onSelectTool("highlighter") }) {
                     Icon(
-                        androidx.compose.material.icons.Icons.Default.Brush,
+                        Icons.Default.Brush,
                         contentDescription = "Highlighter",
                         tint = if (selectedTool == "highlighter") currentColor else MaterialTheme.colorScheme.onSurface
                     )
                 }
                 IconButton(onClick = { onSelectTool("eraser") }) {
                     Icon(
-                        androidx.compose.material.icons.Icons.Default.Delete, // Or eraser icon
+                        Icons.Default.Delete, // Or eraser icon
                         contentDescription = "Eraser",
                         tint = if (selectedTool == "eraser") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                     )
@@ -1452,7 +1419,9 @@ private fun PdfEditModePhone(
                             onErase = { offsets -> onErase(index, offsets) },
                             onEraseStart = { onEraseStart(index) },
                             onEraseEnd = { onEraseEnd(index) },
-                            darkMode = darkMode
+                            darkMode = darkMode,
+                            onStylusDetected = onStylusDetected,
+                            onStylusButtonPressed = onStylusButtonPressed
                         )
                         Spacer(Modifier.height(12.dp))
                     }

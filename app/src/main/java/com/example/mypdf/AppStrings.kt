@@ -65,6 +65,7 @@ interface AppStrings {
     val toolThick: String
     val toolSmooth: String
     val toolUndo: String
+    val stylusButtonTool: String
     val strokeThicknessLabel: String
     
     // Onboarding
@@ -236,6 +237,7 @@ object StringsEs : AppStrings {
     override val toolThick = "Grueso"
     override val toolSmooth = "Suave"
     override val toolUndo = "Deshacer"
+    override val stylusButtonTool = "Herramienta del botón stylus"
     override val strokeThicknessLabel = "Grosor"
     
     override val welcomeTitle = "Bienvenido"
@@ -402,6 +404,7 @@ object StringsEn : AppStrings {
     override val toolThick = "Thick"
     override val toolSmooth = "Smooth"
     override val toolUndo = "Undo"
+    override val stylusButtonTool = "Stylus button tool"
     override val strokeThicknessLabel = "Thickness"
 
     override val welcomeTitle = "Welcome"
@@ -568,6 +571,7 @@ object StringsFr : AppStrings {
     override val toolThick = "Épais"
     override val toolSmooth = "Lisser"
     override val toolUndo = "Annuler"
+    override val stylusButtonTool = "Outil du bouton stylus"
     override val strokeThicknessLabel = "Épaisseur"
 
     override val welcomeTitle = "Bienvenue"
@@ -734,6 +738,7 @@ object StringsIt : AppStrings {
     override val toolThick = " spesso"
     override val toolSmooth = "Liscio"
     override val toolUndo = "Annulla"
+    override val stylusButtonTool = "Strumento pulsante stylus"
     override val strokeThicknessLabel = "Spessore"
 
     override val welcomeTitle = "Benvenuto"

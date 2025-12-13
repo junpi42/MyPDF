@@ -1,6 +1,7 @@
 package com.example.mypdf
 
 import android.graphics.Bitmap
+import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -23,12 +25,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Suppress("UNUSED_PARAMETER") // el parámetro index puede no usarse en composición; suprimimos la advertencia
 @Composable
 fun PdfPageItem(
@@ -47,7 +50,10 @@ fun PdfPageItem(
     // Añadimos callbacks de inicio/fin de gesto con valores por defecto para compatibilidad
     onEraseStart: () -> Unit = {},
     onEraseEnd: () -> Unit = {},
-    darkMode: Boolean
+    darkMode: Boolean,
+    // Stylus parameters
+    onStylusDetected: () -> Unit = {},
+    onStylusButtonPressed: () -> Unit = {}
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
     var canvasW by remember { mutableFloatStateOf(0f) }
@@ -113,6 +119,10 @@ fun PdfPageItem(
             shadowElevation = 4.dp,
             color = pageBg
         ) {
+            // Estado para rastrear si el stylus fue detectado y si el botón estaba presionado
+            var stylusWasDetected by remember { mutableStateOf(false) }
+            var stylusButtonWasPressed by remember { mutableStateOf(false) }
+
             // Construimos el modifier en dos pasos para mantener el código legible
             val canvasBaseModifier = Modifier
                 .fillMaxWidth()
@@ -121,6 +131,29 @@ fun PdfPageItem(
                 .onSizeChanged { newSize ->
                     canvasW = newSize.width.toFloat()
                     canvasH = newSize.height.toFloat()
+                }
+                // Interceptar eventos para detectar el stylus y su botón
+                .pointerInteropFilter { event ->
+                    // Detectar si el evento viene de un stylus
+                    if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                        // Primera vez que se detecta un stylus
+                        if (!stylusWasDetected) {
+                            onStylusDetected()
+                            stylusWasDetected = true
+                        }
+
+                        // Detectar botón del stylus (solo en ACTION_DOWN o ACTION_MOVE)
+                        val buttonPressed = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0 ||
+                                          (event.buttonState and MotionEvent.BUTTON_SECONDARY) != 0
+
+                        // Detectar transición de no-presionado a presionado
+                        if (buttonPressed && !stylusButtonWasPressed) {
+                            onStylusButtonPressed()
+                        }
+                        stylusButtonWasPressed = buttonPressed
+                    }
+                    // Retornar false para no consumir el evento y permitir que continúe el procesamiento normal
+                    false
                 }
 
             val canvasModifier = if (editMode && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {

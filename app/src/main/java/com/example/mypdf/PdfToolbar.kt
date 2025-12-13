@@ -1,6 +1,5 @@
 package com.example.mypdf
 
-import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -11,14 +10,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,10 +33,15 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 
 // Barra de herramientas lateral extraída de PdfViewerScreen
 
+@Suppress("UNUSED_PARAMETER")
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StyledLeftToolBar(
@@ -45,13 +49,13 @@ fun StyledLeftToolBar(
     paletteColors: List<Color>,
     selectedPaletteIndex: Int,
     strokeWidth: Float,
-    smoothingEnabled: Boolean, // mantenido para compatibilidad aunque no se use aún visualmente
+    smoothingEnabled: Boolean,
     onSelectTool: (String) -> Unit,
     onPaletteSlotClicked: (Int) -> Unit,
     onStrokeChange: (Float) -> Unit,
-    onToggleSmoothing: () -> Unit, // idem
-    darkMode: Boolean, // idem
-    language: Language, // idem
+    onToggleSmoothing: () -> Unit,
+    darkMode: Boolean,
+    language: Language,
     onToolboxPositioned: (Rect) -> Unit = {},
     hasUndo: Boolean = true,
     onUndo: () -> Unit = {},
@@ -59,21 +63,47 @@ fun StyledLeftToolBar(
     onHighlighterLongPress: () -> Unit = {},
     onMarkerButtonPositioned: (Rect) -> Unit = {},
     onHighlighterButtonPositioned: (Rect) -> Unit = {},
-    showSlider: Boolean = true, // Si es false, no se muestra el slider (útil para landscape)
+    showSlider: Boolean = true,
+    // Stylus parameters - nuevo sistema basado en detección por uso
+    stylusDetected: Boolean = false,
+    stylusButtonTool: StylusTool = StylusTool.MARKER,
+    onStylusButtonClick: () -> Unit = {},
+    onStylusButtonToolChange: (StylusTool) -> Unit = {},
+    // Nuevos parámetros para el popup de tamaño
+    markerStrokeWidth: Float = 0.006f,
+    highlighterStrokeWidth: Float = 0.02f,
+    eraserRadiusNorm: Float = 0.03f,
+    onMarkerStrokeChange: (Float) -> Unit = {},
+    onHighlighterStrokeChange: (Float) -> Unit = {},
+    onEraserRadiusChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val s = strings()
     val config = LocalConfiguration.current
     val isTablet = config.screenWidthDp > 600
-    val isLandscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE
-    
+    val density = LocalDensity.current
+
+    // Estado para el diálogo de selección de herramienta del stylus
+    var showStylusToolDialog by remember { mutableStateOf(false) }
+
+    // Estados para los popups de ajuste de tamaño
+    var showMarkerPopup by remember { mutableStateOf(false) }
+    var showHighlighterPopup by remember { mutableStateOf(false) }
+    var showEraserPopup by remember { mutableStateOf(false) }
+
+    // Posiciones de los botones para ubicar los popups
+    var markerButtonRect by remember { mutableStateOf(Rect.Zero) }
+    var highlighterButtonRect by remember { mutableStateOf(Rect.Zero) }
+    var eraserButtonRect by remember { mutableStateOf(Rect.Zero) }
+
     // Toolbar un pelín más estrecha
     val toolbarWidth = if (isTablet) 88.dp else 72.dp
     val buttonSize = if (isTablet) 52.dp else 44.dp
     val iconSize = if (isTablet) 34.dp else 28.dp
     val colorSize = if (isTablet) 44.dp else 36.dp
 
-    Surface(
+    Box {
+        Surface(
         modifier = modifier
             .width(toolbarWidth)
             .onGloballyPositioned { coordinates ->
@@ -101,6 +131,7 @@ fun StyledLeftToolBar(
                 iconSize = iconSize
             )
 
+            // Marker con long press para popup
             StyledToolButtonWithLongPress(
                 icon = Icons.Default.Create,
                 label = "Marker",
@@ -108,13 +139,17 @@ fun StyledLeftToolBar(
                 onClick = { onSelectTool("marker") },
                 onLongClick = {
                     onSelectTool("marker")
-                    onMarkerLongPress()
+                    showMarkerPopup = true
                 },
-                onPositioned = onMarkerButtonPositioned,
+                onPositioned = { rect ->
+                    markerButtonRect = rect
+                    onMarkerButtonPositioned(rect)
+                },
                 size = buttonSize,
                 iconSize = iconSize
             )
-            
+
+            // Highlighter con long press para popup
             StyledToolButtonWithLongPress(
                 icon = Icons.Default.BorderColor,
                 label = "Highlighter",
@@ -122,18 +157,27 @@ fun StyledLeftToolBar(
                 onClick = { onSelectTool("highlighter") },
                 onLongClick = {
                     onSelectTool("highlighter")
-                    onHighlighterLongPress()
+                    showHighlighterPopup = true
                 },
-                onPositioned = onHighlighterButtonPositioned,
+                onPositioned = { rect ->
+                    highlighterButtonRect = rect
+                    onHighlighterButtonPositioned(rect)
+                },
                 size = buttonSize,
                 iconSize = iconSize
             )
 
-            StyledToolButton(
+            // Eraser con long press para popup
+            StyledToolButtonWithLongPress(
                 icon = Icons.Default.Delete,
                 label = s.toolErase,
                 selected = selectedTool == "eraser",
                 onClick = { onSelectTool("eraser") },
+                onLongClick = {
+                    onSelectTool("eraser")
+                    showEraserPopup = true
+                },
+                onPositioned = { rect -> eraserButtonRect = rect },
                 size = buttonSize,
                 iconSize = iconSize
             )
@@ -141,7 +185,7 @@ fun StyledLeftToolBar(
             // Botón de Revertir/Deshacer ubicado justo debajo del borrador
             // Botón de Revertir/Deshacer siempre visible, deshabilitado si no hay undo
             StyledToolButton(
-                icon = Icons.Default.Undo,
+                icon = Icons.AutoMirrored.Filled.Undo,
                 label = s.toolUndo,
                 selected = false,
                 onClick = onUndo,
@@ -149,6 +193,19 @@ fun StyledLeftToolBar(
                 iconSize = iconSize,
                 enabled = hasUndo
             )
+
+            // Botón del Stylus - solo visible si se ha detectado un stylus
+            if (stylusDetected) {
+                StyledToolButtonWithLongPress(
+                    icon = Icons.Default.Gesture,
+                    label = "Stylus Button",
+                    selected = false,
+                    onClick = onStylusButtonClick, // Click normal: activa/toggle la herramienta
+                    onLongClick = { showStylusToolDialog = true }, // Long press: abre menú de selección
+                    size = buttonSize,
+                    iconSize = iconSize
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(
@@ -240,7 +297,7 @@ fun StyledLeftToolBar(
                         .padding(top = 12.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    val sliderLength = maxHeight - 16.dp
+                    val sliderLength = this.maxHeight - 16.dp
                     val safeLength = if (sliderLength > 50.dp) sliderLength else 50.dp
 
                     Slider(
@@ -270,6 +327,225 @@ fun StyledLeftToolBar(
                 }
             } else {
                 Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
+
+    // Diálogo de selección de herramienta para el botón del stylus
+    if (showStylusToolDialog) {
+        AlertDialog(
+            onDismissRequest = { showStylusToolDialog = false },
+            title = { Text(s.stylusButtonTool) },
+            text = {
+                Column {
+                    // Solo mostramos las herramientas de dibujo (no NONE ni UNDO)
+                    listOf(StylusTool.MARKER, StylusTool.HIGHLIGHTER, StylusTool.ERASER).forEach { tool ->
+                        val toolLabel = when (tool) {
+                            StylusTool.MARKER -> "Marker"
+                            StylusTool.HIGHLIGHTER -> "Highlighter"
+                            StylusTool.ERASER -> s.toolErase
+                            else -> ""
+                        }
+                        val isSelected = stylusButtonTool == tool
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onStylusButtonToolChange(tool)
+                                    showStylusToolDialog = false
+                                },
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onStylusButtonToolChange(tool)
+                                        showStylusToolDialog = false
+                                    }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(toolLabel)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStylusToolDialog = false }) {
+                    Text(s.cancel)
+                }
+            }
+        )
+    }
+
+        // Popup para ajustar tamaño del Marker
+        if (showMarkerPopup) {
+            ToolSizePopup(
+                toolName = "Marker",
+                currentSize = markerStrokeWidth,
+                minSize = 0.003f,
+                maxSize = 0.02f,
+                onSizeChange = onMarkerStrokeChange,
+                onDismiss = { showMarkerPopup = false },
+                buttonRect = markerButtonRect,
+                previewColor = paletteColors.getOrNull(selectedPaletteIndex) ?: Color.Black,
+                isHighlighter = false
+            )
+        }
+
+        // Popup para ajustar tamaño del Highlighter
+        if (showHighlighterPopup) {
+            ToolSizePopup(
+                toolName = "Highlighter",
+                currentSize = highlighterStrokeWidth,
+                minSize = 0.01f,
+                maxSize = 0.08f,
+                onSizeChange = onHighlighterStrokeChange,
+                onDismiss = { showHighlighterPopup = false },
+                buttonRect = highlighterButtonRect,
+                previewColor = paletteColors.getOrNull(selectedPaletteIndex) ?: Color.Yellow,
+                isHighlighter = true
+            )
+        }
+
+        // Popup para ajustar tamaño del Eraser
+        if (showEraserPopup) {
+            ToolSizePopup(
+                toolName = s.toolErase,
+                currentSize = eraserRadiusNorm,
+                minSize = 0.015f,
+                maxSize = 0.1f,
+                onSizeChange = onEraserRadiusChange,
+                onDismiss = { showEraserPopup = false },
+                buttonRect = eraserButtonRect,
+                previewColor = MaterialTheme.colorScheme.error,
+                isHighlighter = false,
+                isEraser = true
+            )
+        }
+    }
+}
+
+/**
+ * Popup para ajustar el tamaño de una herramienta
+ */
+@Composable
+fun ToolSizePopup(
+    toolName: String,
+    currentSize: Float,
+    minSize: Float,
+    maxSize: Float,
+    onSizeChange: (Float) -> Unit,
+    onDismiss: () -> Unit,
+    buttonRect: Rect,
+    previewColor: Color,
+    isHighlighter: Boolean = false,
+    isEraser: Boolean = false
+) {
+    val density = LocalDensity.current
+
+    Popup(
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+        offset = with(density) {
+            IntOffset(
+                x = buttonRect.right.toInt() + 16.dp.toPx().toInt(),
+                y = buttonRect.top.toInt() - 40.dp.toPx().toInt()
+            )
+        }
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(200.dp)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 8.dp,
+            shadowElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = toolName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                // Preview del trazo
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            RoundedCornerShape(8.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isEraser) {
+                        // Preview del borrador como círculo
+                        Canvas(modifier = Modifier.size(50.dp)) {
+                            drawCircle(
+                                color = previewColor.copy(alpha = 0.5f),
+                                radius = currentSize * 500f
+                            )
+                        }
+                    } else {
+                        // Preview del trazo como línea curva
+                        val displayColor = if (isHighlighter) previewColor.copy(alpha = 0.5f) else previewColor
+                        Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                            val path = Path().apply {
+                                moveTo(0f, size.height * 0.5f)
+                                quadraticBezierTo(
+                                    size.width * 0.25f, size.height * 0.2f,
+                                    size.width * 0.5f, size.height * 0.5f
+                                )
+                                quadraticBezierTo(
+                                    size.width * 0.75f, size.height * 0.8f,
+                                    size.width, size.height * 0.5f
+                                )
+                            }
+                            drawPath(
+                                path = path,
+                                color = displayColor,
+                                style = Stroke(
+                                    width = currentSize * 1000f,
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // Slider para el tamaño
+                Slider(
+                    value = currentSize,
+                    onValueChange = onSizeChange,
+                    valueRange = minSize..maxSize,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Botón para cerrar
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("OK")
+                }
             }
         }
     }
