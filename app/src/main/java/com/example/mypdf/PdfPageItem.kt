@@ -23,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,9 +56,12 @@ fun PdfPageItem(
     darkMode: Boolean,
     // Stylus parameters
     onStylusDetected: () -> Unit = {},
-    onStylusButtonPressed: () -> Unit = {}
+    onStylusButtonPressed: () -> Unit = {},
+    enableStylusPressure: Boolean = true,
+    onPressureUpdate: (Float) -> Unit = {} // Callback para presión en tiempo real
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
+    val currentPressures = remember { mutableStateListOf<Float>() } // Nueva lista para presiones
     var canvasW by remember { mutableFloatStateOf(0f) }
     var canvasH by remember { mutableFloatStateOf(0f) }
 
@@ -84,6 +89,25 @@ fun PdfPageItem(
                     0.25f * p0.x + 0.75f * p1.x,
                     0.25f * p0.y + 0.75f * p1.y
                 )
+                result.add(q); result.add(r)
+            }
+            result.add(smoothed.last())
+            smoothed = result
+        }
+        return smoothed
+    }
+
+    fun smoothPressures(pressures: List<Float>, iterations: Int = 1): List<Float> {
+        if (pressures.size < 3) return pressures
+        var smoothed = pressures
+        repeat(iterations) {
+            val result = mutableListOf<Float>()
+            result.add(smoothed.first())
+            for (i in 0 until smoothed.size - 1) {
+                val p0 = smoothed[i]
+                val p1 = smoothed[i + 1]
+                val q = 0.75f * p0 + 0.25f * p1
+                val r = 0.25f * p0 + 0.75f * p1
                 result.add(q); result.add(r)
             }
             result.add(smoothed.last())
@@ -141,7 +165,14 @@ fun PdfPageItem(
                         if (!stylusWasDetected) {
                             Log.d("PdfPageItem", "Stylus detectado por primera vez")
                             onStylusDetected()
+                            @Suppress("UNUSED_VARIABLE")
                             stylusWasDetected = true
+                        }
+
+                        // Reportar presión en tiempo real
+                        if (enableStylusPressure) {
+                            val pressure = event.pressure.coerceIn(0f, 1f)
+                            onPressureUpdate(pressure)
                         }
 
                         // Detectar botón del stylus (solo en ACTION_DOWN o ACTION_MOVE)
@@ -153,6 +184,7 @@ fun PdfPageItem(
                             Log.d("PdfPageItem", "Botón del stylus PRESIONADO - llamando onStylusButtonPressed")
                             onStylusButtonPressed()
                         }
+                        @Suppress("UNUSED_VARIABLE")
                         stylusButtonWasPressed = buttonPressed
                     }
                     // Retornar false para no consumir el evento y permitir que continúe el procesamiento normal
@@ -176,6 +208,10 @@ fun PdfPageItem(
                         var lastNorm = toNorm(down.position)
 
                         currentPath.add(lastNorm)
+                        // Capturar presión inicial (normalizada entre 0 y 1)
+                        val initialPressure = if (enableStylusPressure) down.pressure.coerceIn(0f, 1f) else 1f
+                        currentPressures.add(initialPressure)
+                        if (enableStylusPressure) onPressureUpdate(initialPressure)
 
                         if (selectedTool == "eraser") {
                             eraserCenter = lastNorm
@@ -189,6 +225,11 @@ fun PdfPageItem(
                             if (change.position != change.previousPosition) {
                                 val newNorm = toNorm(change.position)
                                 currentPath.add(newNorm)
+                                // Capturar presión en cada movimiento
+                                val pressure = if (enableStylusPressure) change.pressure.coerceIn(0f, 1f) else 1f
+                                currentPressures.add(pressure)
+                                // Reportar presión en tiempo real
+                                if (enableStylusPressure) onPressureUpdate(pressure)
                                 if (selectedTool == "eraser") {
                                     eraserCenter = newNorm
                                     onErase(listOf(lastNorm, newNorm))
@@ -200,6 +241,7 @@ fun PdfPageItem(
 
                         if (currentPath.isNotEmpty()) {
                             val basePoints = currentPath.toList()
+                            val basePressures = currentPressures.toList()
                             val tiny = isTinyStroke(basePoints)
                             val final = if (
                                 smoothingEnabled &&
@@ -210,16 +252,27 @@ fun PdfPageItem(
                                 smoothPath(basePoints, 1)
                             } else basePoints
 
+                            // Aplicar suavizado a las presiones también
+                            val finalPressures = if (
+                                smoothingEnabled &&
+                                (selectedTool == "marker" || selectedTool == "highlighter") &&
+                                !tiny &&
+                                basePoints.size > 1
+                            ) {
+                                smoothPressures(basePressures, 1)
+                            } else basePressures
+
                             if (selectedTool == "eraser") {
                                 eraserCenter = final.lastOrNull()
                                 onErase(final)
                                 onEraseEnd()
                             } else {
-                                onPathAdded(DrawingPath(final, currentColor, currentStrokeWidth, isEraser = false))
+                                onPathAdded(DrawingPath(final, currentColor, currentStrokeWidth, isEraser = false, pressures = finalPressures))
                             }
                         }
 
                         currentPath.clear()
+                        currentPressures.clear()
                         eraserCenter = null
                     }
                 }
@@ -232,37 +285,93 @@ fun PdfPageItem(
                 // Dibujar anotaciones previas
                 annotations.paths.forEach { p ->
                     if (p.points.size > 1) {
-                        val path = Path().apply {
-                            val first = toPx(p.points.first())
-                            moveTo(first.x, first.y)
-                            p.points.drop(1).forEach { pt ->
-                                val pp = toPx(pt)
-                                lineTo(pp.x, pp.y)
+                        // Si hay información de presión, dibujar con variación de ancho
+                        if (enableStylusPressure && p.pressures.size == p.points.size) {
+                            // Dibujar segmento por segmento con ancho variable según presión
+                            // A 60% presión se usa el tamaño actual
+                            // Rango: 0.3x (presión 0%) a 1.7x (presión 100%)
+                            for (i in 0 until p.points.size - 1) {
+                                val pt1 = toPx(p.points[i])
+                                val pt2 = toPx(p.points[i + 1])
+                                val pressure = p.pressures[i + 1].coerceIn(0f, 1f)
+                                val pressureFactor = 0.3f + (pressure * 1.4f) // 0.3 a 1.7
+                                val width = (p.strokeWidth * size.width) * pressureFactor
+                                drawPath(
+                                    path = Path().apply { moveTo(pt1.x, pt1.y); lineTo(pt2.x, pt2.y) },
+                                    color = p.color,
+                                    style = Stroke(width = width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
                             }
+                        } else {
+                            // Dibujar normal sin variación de presión
+                            val path = Path().apply {
+                                val first = toPx(p.points.first())
+                                moveTo(first.x, first.y)
+                                p.points.drop(1).forEach { pt ->
+                                    val pp = toPx(pt)
+                                    lineTo(pp.x, pp.y)
+                                }
+                            }
+                            drawPath(path = path, color = p.color, style = Stroke(width = p.strokeWidth * size.width, cap = StrokeCap.Round, join = StrokeJoin.Round))
                         }
-                        drawPath(path = path, color = p.color, style = Stroke(width = p.strokeWidth * size.width))
                     } else if (p.points.size == 1) {
                         val pp = toPx(p.points.first())
-                        drawCircle(color = p.color, radius = (p.strokeWidth * size.width) / 2f, center = pp)
+                        val pressure = if (enableStylusPressure && p.pressures.isNotEmpty()) p.pressures[0].coerceIn(0f, 1f) else 1f
+                        val pressureFactor = 0.3f + (pressure * 1.4f)
+                        val radius = (p.strokeWidth * size.width / 2f) * pressureFactor
+                        drawCircle(color = p.color, radius = radius, center = pp)
                     }
                 }
 
                 // Dibujar trazo actual
                 if ((selectedTool == "marker" || selectedTool == "highlighter") && currentPath.isNotEmpty()) {
                     val drawColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
+
                     if (currentPath.size > 1) {
-                        val path = Path().apply {
-                            val first = toPx(currentPath.first())
-                            moveTo(first.x, first.y)
-                            currentPath.drop(1).forEach { pt ->
-                                val pp = toPx(pt)
-                                lineTo(pp.x, pp.y)
+                        // Si hay presión disponible y está habilitada, dibujar con variación
+                        if (enableStylusPressure && currentPressures.size == currentPath.size) {
+                            // Dibujar segmento por segmento con presión variable
+                            // A 60% presión se usa el tamaño actual
+                            // Rango: 0.3x (presión 0%) a 1.7x (presión 100%)
+                            for (i in 0 until currentPath.size - 1) {
+                                val pt1 = toPx(currentPath[i])
+                                val pt2 = toPx(currentPath[i + 1])
+                                val pressure = currentPressures[i + 1].coerceIn(0f, 1f)
+                                val pressureFactor = 0.3f + (pressure * 1.4f) // 0.3 a 1.7
+                                val width = (currentStrokeWidth * size.width) * pressureFactor
+                                drawPath(
+                                    path = Path().apply { moveTo(pt1.x, pt1.y); lineTo(pt2.x, pt2.y) },
+                                    color = drawColor,
+                                    style = Stroke(width = width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
                             }
+                        } else {
+                            // Dibujar normal sin presión
+                            val path = Path().apply {
+                                val first = toPx(currentPath.first())
+                                moveTo(first.x, first.y)
+                                currentPath.drop(1).forEach { pt ->
+                                    val pp = toPx(pt)
+                                    lineTo(pp.x, pp.y)
+                                }
+                            }
+                            drawPath(path = path, color = drawColor, style = Stroke(width = currentStrokeWidth * size.width, cap = StrokeCap.Round, join = StrokeJoin.Round))
                         }
-                        drawPath(path = path, color = drawColor, style = Stroke(width = currentStrokeWidth * size.width, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
                     } else {
                         val pp = toPx(currentPath.first())
                         drawCircle(color = drawColor, radius = (currentStrokeWidth * size.width) / 2f, center = pp)
+                    }
+                }
+
+                // Dibujar borrador con soporte de presión
+                if (selectedTool == "eraser" && currentPath.isNotEmpty()) {
+                    if (currentPath.size > 1) {
+                        // Borrador normal sin presión
+                        for (i in 0 until currentPath.size - 1) {
+                            val pt = toPx(currentPath[i + 1])
+                            val radius = eraserRadiusNorm * size.width / 2f
+                            drawCircle(color = Color.Red.copy(alpha = 0.3f), radius = radius, center = pt)
+                        }
                     }
                 }
 

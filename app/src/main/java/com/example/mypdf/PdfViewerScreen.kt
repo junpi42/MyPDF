@@ -42,6 +42,7 @@ import androidx.compose.animation.*
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -110,6 +111,21 @@ fun PdfViewerScreen(
     var stylusButtonTool by remember { mutableStateOf(StylusTool.MARKER) }
     var previousTool by remember { mutableStateOf("none") }
     var stylusLastSeenAt by remember { mutableLongStateOf(0L) }
+    var enableStylusPressure by remember { mutableStateOf(true) }
+    var currentStylusPressure by remember { mutableFloatStateOf(0f) } // Presión en tiempo real
+
+    // Cargar preferencias de stylus
+    LaunchedEffect(Unit) {
+        runCatching {
+            val prefFile = File(file.parentFile, file.nameWithoutExtension + ".stylus.json")
+            if (prefFile.exists()) {
+                val content = prefFile.readText()
+                val json = JSONObject(content)
+                stylusButtonTool = StylusTool.valueOf(json.optString("lastTool", "MARKER"))
+                enableStylusPressure = json.optBoolean("enablePressure", true)
+            }
+        }
+    }
 
     // LaunchedEffect para resetear stylusDetected después de inactividad
     LaunchedEffect(stylusLastSeenAt, stylusDetected) {
@@ -407,6 +423,23 @@ fun PdfViewerScreen(
         }
     }
 
+    fun saveStylusPreferences() {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val prefFile = File(file.parentFile, file.nameWithoutExtension + ".stylus.json")
+                val json = JSONObject()
+                    .put("lastTool", stylusButtonTool.name)
+                    .put("enablePressure", enableStylusPressure)
+                prefFile.writeText(json.toString())
+            }
+        }
+    }
+
+    // Guardar preferencias cuando cambian
+    LaunchedEffect(stylusButtonTool, enableStylusPressure) {
+        saveStylusPreferences()
+    }
+
     fun snapshotAnnotations(): Map<Int, PageAnnotations> {
         val copy = mutableMapOf<Int, PageAnnotations>()
         annotations.forEach { (idx, page) ->
@@ -460,8 +493,17 @@ fun PdfViewerScreen(
 
     // Función para manejar la pulsación del botón del stylus (desde el pen físico)
     val handleStylusButtonPress: () -> Unit = {
-        Log.d(TAG, "handleStylusButtonPress INVOCADO")
-        activateStylusButtonTool()
+        Log.d(TAG, "handleStylusButtonPress INVOCADO - stylusButtonTool=$stylusButtonTool")
+        when (stylusButtonTool) {
+            StylusTool.UNDO -> {
+                Log.d(TAG, "Ejecutando UNDO desde botón del stylus")
+                undo()
+            }
+            else -> {
+                Log.d(TAG, "Activando herramienta del stylus desde botón físico")
+                activateStylusButtonTool()
+            }
+        }
     }
 
     // Tutorial Logic
@@ -565,8 +607,9 @@ fun PdfViewerScreen(
 
             // Top bar para tablets
             if (deviceType != DeviceType.PHONE) {
-                StyledTopBar(
-                    onBack = onBack,
+                Box(modifier = Modifier.zIndex(10f)) {
+                    StyledTopBar(
+                        onBack = onBack,
                     tunerOn = tunerOn,
                     concertModeOn = concertModeOn,
                     highlightBack = false,
@@ -627,6 +670,7 @@ fun PdfViewerScreen(
                         }
                     }
                 )
+                }
             }
 
             if (concertModeOn) {
@@ -702,7 +746,9 @@ fun PdfViewerScreen(
                                 smoothingEnabled = smoothingEnabled,
                                 onPathAdded = {},
                                 onErase = {},
-                                darkMode = darkMode
+                                darkMode = darkMode,
+                                enableStylusPressure = enableStylusPressure,
+                                onPressureUpdate = { currentStylusPressure = it }
                             )
                             Spacer(Modifier.height(12.dp))
                         }
@@ -913,7 +959,8 @@ fun PdfViewerScreen(
                                 stylusDetected = true
                                 stylusLastSeenAt = System.currentTimeMillis()
                             },
-                            onStylusButtonPressed = handleStylusButtonPress
+                            onStylusButtonPressed = handleStylusButtonPress,
+                            enableStylusPressure = enableStylusPressure
                         )
                     } else {
                         PdfEditModeTablet(
@@ -1008,7 +1055,11 @@ fun PdfViewerScreen(
                             // Callbacks para cambio de tamaño de herramientas
                             onMarkerStrokeChange = { markerStrokeWidth = it },
                             onHighlighterStrokeChange = { highlighterStrokeWidth = it },
-                            onEraserRadiusChange = { eraserRadiusNorm = it.coerceIn(0.015f, 0.1f) }
+                            onEraserRadiusChange = { eraserRadiusNorm = it.coerceIn(0.015f, 0.1f) },
+                            // Parámetros de presión capacitiva
+                            enableStylusPressure = enableStylusPressure,
+                            onEnableStylusPressureChange = { enableStylusPressure = it },
+                            onPressureUpdate = { currentStylusPressure = it }
                         )
                     }
                     }
@@ -1030,6 +1081,69 @@ fun PdfViewerScreen(
                 },
                 onDismiss = onTutorialComplete
             )
+
+            // Indicador visual de presión del stylus en tiempo real
+            if (stylusDetected && enableStylusPressure && currentStylusPressure > 0f) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        .padding(12.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(150.dp)
+                    ) {
+                        // Título
+                        Text(
+                            text = "Presión",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Barra de presión
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(20.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = MaterialTheme.shapes.small
+                                )
+                        ) {
+                            // Relleno indicador de presión
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(currentStylusPressure)
+                                    .background(
+                                        color = when {
+                                            currentStylusPressure < 0.33f -> Color(0xFF4CAF50) // Verde
+                                            currentStylusPressure < 0.66f -> Color(0xFFFFC107) // Amarillo
+                                            else -> Color(0xFFFF5722) // Naranja/Rojo
+                                        },
+                                        shape = MaterialTheme.shapes.small
+                                    )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Porcentaje
+                        Text(
+                            text = "${(currentStylusPressure * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
         }
 
         // Metronome Settings Panel
@@ -1141,17 +1255,25 @@ private fun PdfEditModeTablet(
     onStylusDetected: () -> Unit = {},
     onStylusButtonClick: () -> Unit = {},
     onStylusButtonToolChange: (StylusTool) -> Unit = {},
-    onStylusButtonPressed: () -> Unit = {}
+    onStylusButtonPressed: () -> Unit = {},
+    // Parámetros de presión capacitiva
+    enableStylusPressure: Boolean = true,
+    onEnableStylusPressureChange: (Boolean) -> Unit = {},
+    onPressureUpdate: (Float) -> Unit = {}
 ) {
     val topBarHeight = 64.dp
     val config = LocalConfiguration.current
+    @Suppress("UNUSED_VARIABLE")
     val isPortrait = config.orientation == Configuration.ORIENTATION_PORTRAIT
 
     // Posición de la barra de herramientas para el tutorial
+    @Suppress("UNUSED_VARIABLE")
     var toolboxBounds by remember { mutableStateOf<Rect?>(null) }
     
     // Posición de los botones individuales
+    @Suppress("UNUSED_VARIABLE")
     var markerButtonBounds by remember { mutableStateOf<Rect?>(null) }
+    @Suppress("UNUSED_VARIABLE")
     var highlighterButtonBounds by remember { mutableStateOf<Rect?>(null) }
     
     Box(
@@ -1204,7 +1326,9 @@ private fun PdfEditModeTablet(
                     onEraseEnd = { onEraseEnd(index) },
                     darkMode = darkMode,
                     onStylusDetected = onStylusDetected,
-                    onStylusButtonPressed = onStylusButtonPressed
+                    onStylusButtonPressed = onStylusButtonPressed,
+                    enableStylusPressure = enableStylusPressure,
+                    onPressureUpdate = onPressureUpdate
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -1237,6 +1361,7 @@ private fun PdfEditModeTablet(
                 darkMode = darkMode,
                 language = language,
                 onToolboxPositioned = { rect -> 
+                    @Suppress("UNUSED_VARIABLE")
                     toolboxBounds = rect
                     onUpdateTutorialTarget { it.copy(toolbox = rect) } 
                 },
@@ -1244,8 +1369,14 @@ private fun PdfEditModeTablet(
                 onUndo = onUndo,
                 onMarkerLongPress = { },
                 onHighlighterLongPress = { },
-                onMarkerButtonPositioned = { rect -> markerButtonBounds = rect },
-                onHighlighterButtonPositioned = { rect -> highlighterButtonBounds = rect },
+                onMarkerButtonPositioned = { rect ->
+                    @Suppress("UNUSED_VARIABLE")
+                    markerButtonBounds = rect
+                },
+                onHighlighterButtonPositioned = { rect ->
+                    @Suppress("UNUSED_VARIABLE")
+                    highlighterButtonBounds = rect
+                },
                 showSlider = false,
                 // Stylus parameters - nuevo sistema
                 stylusDetected = stylusDetected,
@@ -1258,7 +1389,10 @@ private fun PdfEditModeTablet(
                 eraserRadiusNorm = eraserRadiusNorm,
                 onMarkerStrokeChange = onMarkerStrokeChange,
                 onHighlighterStrokeChange = onHighlighterStrokeChange,
-                onEraserRadiusChange = onEraserRadiusChange
+                onEraserRadiusChange = onEraserRadiusChange,
+                // Parámetros de presión capacitiva del stylus
+                enableStylusPressure = enableStylusPressure,
+                onEnableStylusPressureChange = { onEnableStylusPressureChange(it) }
             )
         }
 
@@ -1333,7 +1467,9 @@ private fun PdfEditModePhone(
     hasUndo: Boolean,
     // Stylus parameters
     onStylusDetected: () -> Unit = {},
-    onStylusButtonPressed: () -> Unit = {}
+    onStylusButtonPressed: () -> Unit = {},
+    enableStylusPressure: Boolean = true,
+    onPressureUpdate: (Float) -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -1470,7 +1606,9 @@ private fun PdfEditModePhone(
                             onEraseEnd = { onEraseEnd(index) },
                             darkMode = darkMode,
                             onStylusDetected = onStylusDetected,
-                            onStylusButtonPressed = onStylusButtonPressed
+                            onStylusButtonPressed = onStylusButtonPressed,
+                            enableStylusPressure = enableStylusPressure,
+                            onPressureUpdate = onPressureUpdate
                         )
                         Spacer(Modifier.height(12.dp))
                     }

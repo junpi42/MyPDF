@@ -25,6 +25,8 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material.icons.filled.AvTimer
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -53,16 +55,17 @@ fun StyledTopBar(
     val height = if (isTablet) 80.dp else 64.dp
     val horizontalPadding = if (isTablet && isLandscape) 0.dp else 8.dp
     
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth().height(height),
-        shadowElevation = 4.dp
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().height(height),
+            shadowElevation = 4.dp
         ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
             // Back Button
             val backScale = if (highlightBack) {
                 val infiniteTransition = rememberInfiniteTransition(label = "backPulseScale")
@@ -200,5 +203,24 @@ fun StyledTopBar(
                 )
             }
         }
+    }
+
+        // Sombreado en el borde inferior para mayor diferenciación
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(12.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.3f),
+                            Color.Black.copy(alpha = 0.15f),
+                            Color.Black.copy(alpha = 0.05f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
     }
 }

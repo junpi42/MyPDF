@@ -65,6 +65,7 @@ fun StyledLeftToolBar(
     onMarkerButtonPositioned: (Rect) -> Unit = {},
     onHighlighterButtonPositioned: (Rect) -> Unit = {},
     showSlider: Boolean = true,
+    modifier: Modifier = Modifier,
     // Stylus parameters - nuevo sistema basado en detección por uso
     stylusDetected: Boolean = false,
     stylusButtonTool: StylusTool = StylusTool.MARKER,
@@ -77,7 +78,9 @@ fun StyledLeftToolBar(
     onMarkerStrokeChange: (Float) -> Unit = {},
     onHighlighterStrokeChange: (Float) -> Unit = {},
     onEraserRadiusChange: (Float) -> Unit = {},
-    modifier: Modifier = Modifier
+    // Parámetro para presión capacitiva del stylus
+    enableStylusPressure: Boolean = true,
+    onEnableStylusPressureChange: (Boolean) -> Unit = {}
 ) {
     val s = strings()
     val config = LocalConfiguration.current
@@ -345,12 +348,13 @@ fun StyledLeftToolBar(
             title = { Text(s.stylusButtonTool) },
             text = {
                 Column {
-                    // Solo mostramos las herramientas de dibujo (no NONE ni UNDO)
-                    listOf(StylusTool.MARKER, StylusTool.HIGHLIGHTER, StylusTool.ERASER).forEach { tool ->
+                    // Mostramos todas las herramientas incluyendo UNDO
+                    listOf(StylusTool.MARKER, StylusTool.HIGHLIGHTER, StylusTool.ERASER, StylusTool.UNDO).forEach { tool ->
                         val toolLabel = when (tool) {
                             StylusTool.MARKER -> "Marker"
                             StylusTool.HIGHLIGHTER -> "Highlighter"
                             StylusTool.ERASER -> s.toolErase
+                            StylusTool.UNDO -> "Undo"
                             else -> ""
                         }
                         val isSelected = stylusButtonTool == tool
@@ -379,6 +383,24 @@ fun StyledLeftToolBar(
                                 Text(toolLabel)
                             }
                         }
+                    }
+
+                    Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    // Opción para habilitar/deshabilitar presión capacitiva
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onEnableStylusPressureChange(!enableStylusPressure) }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = enableStylusPressure,
+                            onCheckedChange = { onEnableStylusPressureChange(it) }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Use pressure sensitivity")
                     }
                 }
             },
