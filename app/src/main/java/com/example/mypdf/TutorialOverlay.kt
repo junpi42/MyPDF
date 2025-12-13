@@ -4,6 +4,8 @@ import android.view.MotionEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -52,6 +54,8 @@ enum class TutorialStep {
     TUNER_ACTIVE,
     TUNER_MENU,
     CONCERT_MODE,
+    WINK_DETECTOR,
+    WINK_CALIBRATION,
     EXIT_CONCERT,
     FINISHED
 }
@@ -85,6 +89,8 @@ fun TutorialOverlay(
         TutorialStep.TUNER_ACTIVE -> s.tutorialTunerActiveTitle to s.tutorialTunerActiveBody
         TutorialStep.TUNER_MENU -> s.tutorialTunerMenuTitle to s.tutorialTunerMenuBody
         TutorialStep.CONCERT_MODE -> s.tutorialConcertModeTitle to s.tutorialConcertModeBody
+        TutorialStep.WINK_DETECTOR -> s.tutorialWinkDetectorTitle to s.tutorialWinkDetectorBody
+        TutorialStep.WINK_CALIBRATION -> s.tutorialWinkCalibrationTitle to s.tutorialWinkCalibrationBody
         TutorialStep.EXIT_CONCERT -> s.tutorialExitConcertTitle to s.tutorialExitConcertBody
         TutorialStep.FINISHED -> s.tutorialFinishedTitle to s.tutorialFinishedBody
         else -> "" to ""
@@ -127,7 +133,10 @@ fun TutorialOverlay(
             TutorialStep.OPEN_FILE,
             TutorialStep.TUNER_BUTTON,
             TutorialStep.TUNER_ACTIVE,
+            TutorialStep.TUNER_ACTIVE,
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> true
             else -> false
         }
@@ -183,18 +192,33 @@ fun TutorialBlocker(
                 if (isDialogStep) {
                     return@pointerInteropFilter false
                 }
-                
+
                 val position = Offset(motionEvent.x, motionEvent.y)
-                
+
+                // Compute close button area (top-left), allow touches to reach the button
+                // Match the visual size below: make touch area slightly larger
+                val closeButtonTouchSizeDp = 64.dp // larger hit target
+                val closeButtonPaddingDp = 12.dp
+                val closeSizePx = with(density) { closeButtonTouchSizeDp.toPx() }
+                val closePaddingPx = with(density) { closeButtonPaddingDp.toPx() }
+
+                val insideCloseArea = position.x >= closePaddingPx && position.x <= (closePaddingPx + closeSizePx) &&
+                                       position.y >= closePaddingPx && position.y <= (closePaddingPx + closeSizePx)
+
+                if (insideCloseArea && showCloseButton) {
+                    // Let the IconButton receive the event
+                    return@pointerInteropFilter false
+                }
+
                 // Calculate anchor rect in current coordinates
                 val anchorRectLocal = if (targetRect != null && !targetRect.isEmpty) {
                     targetRect.translate(-rootOffset.x, -rootOffset.y)
                 } else {
                     null
                 }
-                
+
                 val isInsideSpotlight = anchorRectLocal?.contains(position) == true
-                
+
                 if (isInsideSpotlight) {
                     // Inside spotlight: return false to let the event pass through
                     false
@@ -262,14 +286,28 @@ fun TutorialBlocker(
         }
 
         if (showCloseButton) {
-            IconButton(
-                onClick = onSkip,
+            // Hacemos el botón más grande, con borde más grueso y fondo semitransparente
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
                     .padding(16.dp)
                     .statusBarsPadding()
+                    .wrapContentSize()
+                    .align(Alignment.TopStart)
             ) {
-                Icon(Icons.Filled.Close, contentDescription = strings().tutorialExit, tint = Color.White)
+                IconButton(
+                    onClick = onSkip,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .border(width = 3.dp, color = Color.White.copy(alpha = 0.95f), shape = MaterialTheme.shapes.small)
+                        .background(color = Color.Black.copy(alpha = 0.45f), shape = MaterialTheme.shapes.small)
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = strings().tutorialExit,
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
         }
 
@@ -326,6 +364,8 @@ private fun fallbackRectForStep(
             TutorialStep.TUNER_ACTIVE,
             TutorialStep.TUNER_MENU -> rectAt(0.62f, 0.25f, widthDp = 220.dp, heightDp = 96.dp)
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f, widthDp = 140.dp, heightDp = 72.dp)
             else -> rectAt(0.6f, 0.5f)
         }
@@ -342,6 +382,8 @@ private fun fallbackRectForStep(
             TutorialStep.TUNER_ACTIVE,
             TutorialStep.TUNER_MENU -> rectAt(0.5f, 0.25f)
             TutorialStep.CONCERT_MODE,
+            TutorialStep.WINK_DETECTOR,
+            TutorialStep.WINK_CALIBRATION,
             TutorialStep.EXIT_CONCERT -> rectAt(0.88f, 0.12f)
             else -> rectAt(0.5f, 0.5f)
         }
@@ -387,7 +429,7 @@ private fun BoxWithConstraintsScope.StickyNote(
     }
     if (spaceBottom >= measuredHeightPx) {
         val cx = rect.left + rect.width / 2f - measuredWidthPx / 2f
-        val cy = rect.bottom + spacingPx
+        val cy = rect.bottom + spacingPx + measuredHeightPx
         candidates += "bottom" to (cx to cy)
     }
     if (spaceLeft >= measuredWidthPx) {
