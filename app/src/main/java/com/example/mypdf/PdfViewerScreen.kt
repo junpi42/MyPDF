@@ -111,6 +111,20 @@ fun PdfViewerScreen(
     var previousTool by remember { mutableStateOf("none") }
     var stylusLastSeenAt by remember { mutableLongStateOf(0L) }
 
+    // LaunchedEffect para resetear stylusDetected después de inactividad
+    LaunchedEffect(stylusLastSeenAt, stylusDetected) {
+        if (stylusDetected && stylusLastSeenAt > 0L) {
+            while (true) {
+                delay(1000L) // Verificar cada segundo
+                val elapsed = System.currentTimeMillis() - stylusLastSeenAt
+                if (elapsed > STYLUS_VISIBILITY_TIMEOUT_MS) {
+                    stylusDetected = false
+                    break
+                }
+            }
+        }
+    }
+
     // ===== MODO DIA / NOCHE =====
     val darkMode = isDarkMode
 
@@ -895,7 +909,10 @@ fun PdfViewerScreen(
                             onShowTunerSettings = { showTunerSettings = true },
                             onUndo = { undo() },
                             hasUndo = undoStack.isNotEmpty(),
-                            onStylusDetected = { stylusDetected = true },
+                            onStylusDetected = {
+                                stylusDetected = true
+                                stylusLastSeenAt = System.currentTimeMillis()
+                            },
                             onStylusButtonPressed = handleStylusButtonPress
                         )
                     } else {
@@ -981,7 +998,10 @@ fun PdfViewerScreen(
                             // Stylus parameters
                             stylusDetected = stylusDetected,
                             stylusButtonTool = stylusButtonTool,
-                            onStylusDetected = { stylusDetected = true },
+                            onStylusDetected = {
+                                stylusDetected = true
+                                stylusLastSeenAt = System.currentTimeMillis()
+                            },
                             onStylusButtonClick = { activateStylusButtonTool() },
                             onStylusButtonToolChange = { stylusButtonTool = it },
                             onStylusButtonPressed = handleStylusButtonPress,
