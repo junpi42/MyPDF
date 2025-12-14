@@ -91,6 +91,9 @@ class MainActivity : ComponentActivity() {
             var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
 
+            var isVerticalScroll by remember { mutableStateOf(initialSettings?.isVerticalScroll ?: true) }
+            var enableStylusPressure by remember { mutableStateOf(initialSettings?.enableStylusPressure ?: true) }
+
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
 
             // --- Google Sign In State ---
@@ -171,7 +174,9 @@ class MainActivity : ComponentActivity() {
                         isDarkMode = darkMode,
                         isDaltonic = isDaltonic,
                         gridScale = gridScale,
-                        tutorialCompleted = tutorialCompleted
+                        tutorialCompleted = tutorialCompleted,
+                        isVerticalScroll = isVerticalScroll,
+                        enableStylusPressure = enableStylusPressure
                     )
                 )
             }
@@ -188,6 +193,8 @@ class MainActivity : ComponentActivity() {
                             
                             OnboardingDialog(
                                 initialLanguage = initialLang,
+                                googleAccount = googleAccount,
+                                onGoogleSignIn = { doSignIn() },
                                 onFinish = { lang, dark, daltonic ->
                                     language = lang
                                     darkMode = dark
@@ -218,7 +225,11 @@ class MainActivity : ComponentActivity() {
                                 onSignIn = { doSignIn() },
                                 onSignOut = { doSignOut() },
                                 onSyncNow = triggerSync,
-                                refreshTrigger = refreshTrigger
+                                refreshTrigger = refreshTrigger,
+                                isVerticalScroll = isVerticalScroll,
+                                onVerticalScrollChange = { isVerticalScroll = it; save() },
+                                enableStylusPressure = enableStylusPressure,
+                                onEnableStylusPressureChange = { enableStylusPressure = it; save() }
                             )
                         }
                     }
@@ -246,7 +257,11 @@ private fun AppRootAdaptive(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onSyncNow: () -> Unit,
-    refreshTrigger: Int
+    refreshTrigger: Int,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    enableStylusPressure: Boolean,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
@@ -316,7 +331,12 @@ private fun AppRootAdaptive(
                         tutorialStep = TutorialStep.NONE
                         tutorialTargetRect = null
                     },
-                    refreshTrigger = refreshTrigger
+                    refreshTrigger = refreshTrigger,
+                    // New params
+                    isVerticalScroll = isVerticalScroll,
+                    onVerticalScrollChange = onVerticalScrollChange, // passed to settings via toolbar?
+                    enableStylusPressure = enableStylusPressure,
+                    onEnableStylusPressureChange = onEnableStylusPressureChange
                 )
             }
         }

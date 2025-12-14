@@ -15,8 +15,13 @@ interface AppStrings {
     val delete: String
     val rename: String
     val settingsTitle: String
+    val systemSettings: String
+    val editorSettings: String
     val languageLabel: String
     val gridSize: String
+    val verticalScroll: String
+    val horizontalScroll: String
+    val stylusPressure: String
 
     // Biblioteca
     val themes: String
@@ -191,8 +196,13 @@ object StringsEs : AppStrings {
     override val delete = "Eliminar"
     override val rename = "Renombrar"
     override val settingsTitle = "Ajustes"
+    override val systemSettings = "Ajustes del sistema"
+    override val editorSettings = "Ajustes del editor"
     override val languageLabel = "Idioma"
     override val gridSize = "Tamaño de cuadrícula"
+    override val verticalScroll = "Desplazamiento vertical"
+    override val horizontalScroll = "Desplazamiento horizontal"
+    override val stylusPressure = "Sensibilidad del stylus"
 
     override val themes = "Temas"
     override val categories = "Categorías"
@@ -358,8 +368,13 @@ object StringsEn : AppStrings {
     override val delete = "Delete"
     override val rename = "Rename"
     override val settingsTitle = "Settings"
+    override val systemSettings = "System settings"
+    override val editorSettings = "Editor settings"
     override val languageLabel = "Language"
     override val gridSize = "Grid Size"
+    override val verticalScroll = "Vertical scroll"
+    override val horizontalScroll = "Horizontal scroll"
+    override val stylusPressure = "Stylus pressure"
 
     override val themes = "Themes"
     override val categories = "Categories"
@@ -525,8 +540,13 @@ object StringsFr : AppStrings {
     override val delete = "Supprimer"
     override val rename = "Renommer"
     override val settingsTitle = "Paramètres"
+    override val systemSettings = "Paramètres système"
+    override val editorSettings = "Paramètres de l'éditeur"
     override val languageLabel = "Langue"
     override val gridSize = "Taille de la grille"
+    override val verticalScroll = "Défilement vertical"
+    override val horizontalScroll = "Défilement horizontal"
+    override val stylusPressure = "Pression du stylet"
 
     override val themes = "Thèmes"
     override val categories = "Catégories"
@@ -692,8 +712,13 @@ object StringsIt : AppStrings {
     override val delete = "Elimina"
     override val rename = "Rinomina"
     override val settingsTitle = "Impostazioni"
+    override val systemSettings = "Impostazioni di sistema"
+    override val editorSettings = "Impostazioni editor"
     override val languageLabel = "Lingua"
     override val gridSize = "Dimensione griglia"
+    override val verticalScroll = "Scorrimento verticale"
+    override val horizontalScroll = "Scorrimento orizzontale"
+    override val stylusPressure = "Pressione dello stilo"
 
     override val themes = "Temi"
     override val categories = "Categorie"

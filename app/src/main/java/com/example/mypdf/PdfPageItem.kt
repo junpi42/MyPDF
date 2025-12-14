@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -58,7 +59,9 @@ fun PdfPageItem(
     onStylusDetected: () -> Unit = {},
     onStylusButtonPressed: () -> Unit = {},
     enableStylusPressure: Boolean = true,
-    onPressureUpdate: (Float) -> Unit = {} // Callback para presión en tiempo real
+    onPressureUpdate: (Float) -> Unit = {}, // Callback para presión en tiempo real
+    modifier: Modifier = Modifier,
+    isVertical: Boolean = true
 ) {
     val currentPath = remember { mutableStateListOf<Offset>() }
     val currentPressures = remember { mutableStateListOf<Float>() } // Nueva lista para presiones
@@ -137,8 +140,7 @@ fun PdfPageItem(
         val canvasBg = if (darkMode) Color(0xFFFAFAFA) else MaterialTheme.colorScheme.surface
 
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = modifier
                 .padding(8.dp),
             shape = MaterialTheme.shapes.small,
             shadowElevation = 4.dp,
@@ -149,8 +151,9 @@ fun PdfPageItem(
             var stylusButtonWasPressed by remember { mutableStateOf(false) }
 
             // Construimos el modifier en dos pasos para mantener el código legible
+            val sizeMod = if (isVertical) Modifier.fillMaxWidth() else Modifier.fillMaxHeight()
             val canvasBaseModifier = Modifier
-                .fillMaxWidth()
+                .then(sizeMod)
                 .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
                 .background(canvasBg)
                 .onSizeChanged { newSize ->

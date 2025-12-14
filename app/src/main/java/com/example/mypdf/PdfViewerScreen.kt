@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -98,7 +99,11 @@ fun PdfViewerScreen(
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
     onTutorialComplete: () -> Unit,
-    refreshTrigger: Int = 0
+    refreshTrigger: Int = 0,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    enableStylusPressure: Boolean,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -1021,7 +1026,10 @@ fun PdfViewerScreen(
                             enableStylusPressure = enableStylusPressure,
                             metronomeOn = metronomeOn,
                             onMetronomeClick = onMetronomeClickLocal,
-                            onMetronomeLongClick = onMetronomeLongClickLocal
+                            onMetronomeLongClick = onMetronomeLongClickLocal,
+                            isVerticalScroll = isVerticalScroll,
+                            onVerticalScrollChange = onVerticalScrollChange,
+                            onEnableStylusPressureChange = onEnableStylusPressureChange
                         )
                     } else {
                         PdfEditModeTablet(
@@ -1122,7 +1130,9 @@ fun PdfViewerScreen(
                             onEnableStylusPressureChange = { enableStylusPressure = it },
                             onPressureUpdate = {
                                 stylusLastSeenAt = System.currentTimeMillis()
-                            }
+                            },
+                            isVerticalScroll = isVerticalScroll,
+                            onVerticalScrollChange = onVerticalScrollChange
                         )
                     }
                     }
@@ -1259,7 +1269,9 @@ private fun PdfEditModeTablet(
     // Parámetros de presión capacitiva
     enableStylusPressure: Boolean = true,
     onEnableStylusPressureChange: (Boolean) -> Unit = {},
-    onPressureUpdate: (Float) -> Unit = {}
+    onPressureUpdate: (Float) -> Unit = {},
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit
 ) {
     val topBarHeight = 64.dp
     val config = LocalConfiguration.current
@@ -1271,11 +1283,12 @@ private fun PdfEditModeTablet(
     var toolboxBounds by remember { mutableStateOf<Rect?>(null) }
     
     // Posición de los botones individuales
-    @Suppress("UNUSED_VARIABLE")
     var markerButtonBounds by remember { mutableStateOf<Rect?>(null) }
-    @Suppress("UNUSED_VARIABLE")
     var highlighterButtonBounds by remember { mutableStateOf<Rect?>(null) }
-    
+
+    // Estado para el diálogo de ajustes del editor
+    var showEditorSettings by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1290,47 +1303,92 @@ private fun PdfEditModeTablet(
                 } else Modifier
             )
     ) {
-        LazyColumn(
-            state = listState,
-            userScrollEnabled = !isPinching && selectedTool == "none",
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offsetX,
-                    translationY = offsetY
-                ),
-            contentPadding = PaddingValues(bottom = 16.dp)
-        ) {
-            items(count = pageCount) { index ->
-                val bmp = pageBitmaps.getOrNull(index)
-                PdfPageItem(
-                    index = index,
-                    bitmap = bmp,
-                    showLoadingLabel = bmp == null,
-                    editMode = true,
-                    annotations = annotations[index] ?: PageAnnotations(index),
-                    selectedTool = selectedTool,
-                    currentColor = currentColor,
-                    currentStrokeWidth = when (selectedTool) {
-                        "marker" -> markerStrokeWidth
-                        "highlighter" -> highlighterStrokeWidth
-                        else -> markerStrokeWidth
-                    },
-                    eraserRadiusNorm = eraserRadiusNorm,
-                    smoothingEnabled = smoothingEnabled,
-                    onPathAdded = { path -> onPathAdded(index, path) },
-                    onErase = { offsets -> onErase(index, offsets) },
-                    onEraseStart = { onEraseStart(index) },
-                    onEraseEnd = { onEraseEnd(index) },
-                    darkMode = darkMode,
-                    onStylusDetected = onStylusDetected,
-                    onStylusButtonPressed = onStylusButtonPressed,
-                    enableStylusPressure = enableStylusPressure,
-                    onPressureUpdate = onPressureUpdate
-                )
-                Spacer(Modifier.height(12.dp))
+        val listModifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offsetX,
+                translationY = offsetY
+            )
+        
+        if (isVerticalScroll) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        isVertical = true
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+        } else {
+             androidx.compose.foundation.lazy.LazyRow(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(end = 16.dp), // Padding at end for horizontal
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillParentMaxHeight(),
+                        isVertical = false
+                    )
+                }
             }
         }
 
@@ -1392,7 +1450,8 @@ private fun PdfEditModeTablet(
                 onEraserRadiusChange = onEraserRadiusChange,
                 // Parámetros de presión capacitiva del stylus
                 enableStylusPressure = enableStylusPressure,
-                onEnableStylusPressureChange = { onEnableStylusPressureChange(it) }
+                onEnableStylusPressureChange = { onEnableStylusPressureChange(it) },
+                onShowSettings = { showEditorSettings = true }
             )
         }
 
@@ -1412,6 +1471,18 @@ private fun PdfEditModeTablet(
                 extendedMode = tunerExtendedMode,
                 onToggleExtendedMode = onToggleExtendedMode,
                 onDismiss = onDismissTunerSettings
+            )
+        }
+
+        if (showEditorSettings) {
+            EditorSettingsDialog(
+                isDaltonic = isDaltonic,
+                onToggleDaltonic = onToggleDaltonic,
+                isVerticalScroll = isVerticalScroll,
+                onVerticalScrollChange = onVerticalScrollChange,
+                enableStylusPressure = enableStylusPressure,
+                onEnableStylusPressureChange = onEnableStylusPressureChange,
+                onDismiss = { showEditorSettings = false }
             )
         }
     }
@@ -1472,8 +1543,13 @@ private fun PdfEditModePhone(
     onPressureUpdate: (Float) -> Unit = {},
     metronomeOn: Boolean,
     onMetronomeClick: () -> Unit,
-    onMetronomeLongClick: () -> Unit
+    onMetronomeLongClick: () -> Unit,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
+    var showEditorSettings by remember { mutableStateOf(false) }
+    
     Scaffold(
         topBar = {
             if (!concertModeOn) {
@@ -1559,6 +1635,13 @@ private fun PdfEditModePhone(
                             .clickable { onPaletteSlotClicked(index) }
                     )
                 }
+                
+                Spacer(Modifier.width(8.dp))
+                
+                // Settings Button
+                IconButton(onClick = { showEditorSettings = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
     ) { padding ->
@@ -1580,49 +1663,106 @@ private fun PdfEditModePhone(
                         } else Modifier
                     )
             ) {
-                LazyColumn(
-                    state = listState,
-                    userScrollEnabled = !isPinching && selectedTool == "none",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offsetX,
-                            translationY = offsetY
-                        ),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    items(count = pageCount) { index ->
-                        val bmp = pageBitmaps.getOrNull(index)
-                        PdfPageItem(
-                            index = index,
-                            bitmap = bmp,
-                            showLoadingLabel = bmp == null,
-                            editMode = true,
-                            annotations = annotations[index] ?: PageAnnotations(index),
-                            selectedTool = selectedTool,
-                            currentColor = currentColor,
-                            currentStrokeWidth = when (selectedTool) {
-                                "marker" -> markerStrokeWidth
-                                "highlighter" -> highlighterStrokeWidth
-                                else -> markerStrokeWidth
-                            },
-                            eraserRadiusNorm = eraserRadiusNorm,
-                            smoothingEnabled = smoothingEnabled,
-                            onPathAdded = { path -> onPathAdded(index, path) },
-                            onErase = { offsets -> onErase(index, offsets) },
-                            onEraseStart = { onEraseStart(index) },
-                            onEraseEnd = { onEraseEnd(index) },
-                            darkMode = darkMode,
-                            onStylusDetected = onStylusDetected,
-                            onStylusButtonPressed = onStylusButtonPressed,
-                            enableStylusPressure = enableStylusPressure,
-                            onPressureUpdate = onPressureUpdate
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    }
+        val listModifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offsetX,
+                translationY = offsetY
+            )
+
+        if (isVerticalScroll) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(bottom = 80.dp) // Bottom padding for toolbar
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        isVertical = true
+                    )
+                    Spacer(Modifier.height(12.dp))
                 }
+            }
+        } else {
+            androidx.compose.foundation.lazy.LazyRow(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(end = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillParentMaxHeight().padding(bottom = 56.dp),
+                        isVertical = false
+                    )
+                }
+            }
+        }
+        
+        if (showEditorSettings) {
+             EditorSettingsDialog(
+                isDaltonic = isDaltonic,
+                onToggleDaltonic = onToggleDaltonic,
+                isVerticalScroll = isVerticalScroll,
+                onVerticalScrollChange = onVerticalScrollChange,
+                enableStylusPressure = enableStylusPressure,
+                onEnableStylusPressureChange = onEnableStylusPressureChange,
+                onDismiss = { showEditorSettings = false }
+            )
+        }
 
                 if (showColorPicker) {
                     ColorPickerDialog(
