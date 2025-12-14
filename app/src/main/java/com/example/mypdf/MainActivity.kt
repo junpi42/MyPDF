@@ -301,7 +301,10 @@ private fun AppRootAdaptive(
                 PdfEditScreen(
                     deviceType = deviceType,
                     file = selectedFile,
-                    onBack = { selectedPath = null },
+                    onBack = { 
+                        selectedPath = null
+                        onSyncNow() // Sync changes immediately after editing
+                    },
                     isDarkMode = isDarkMode,
                     isDaltonic = isDaltonic,
                     onToggleDaltonic = onToggleDaltonic,
@@ -312,7 +315,8 @@ private fun AppRootAdaptive(
                         onTutorialComplete()
                         tutorialStep = TutorialStep.NONE
                         tutorialTargetRect = null
-                    }
+                    },
+                    refreshTrigger = refreshTrigger
                 )
             }
         }

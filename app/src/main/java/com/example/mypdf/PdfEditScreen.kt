@@ -14,7 +14,8 @@ fun PdfEditScreen(
     language: Language,
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
-    onTutorialComplete: () -> Unit
+    onTutorialComplete: () -> Unit,
+    refreshTrigger: Int = 0
 ) {
     PdfViewerScreen(
         deviceType = deviceType,
@@ -26,6 +27,7 @@ fun PdfEditScreen(
         language = language,
         tutorialState = tutorialState,
         onTutorialStateChange = onTutorialStateChange,
-        onTutorialComplete = onTutorialComplete
+        onTutorialComplete = onTutorialComplete,
+        refreshTrigger = refreshTrigger
     )
 }

@@ -231,6 +231,7 @@ fun StyledLeftToolBar(
             ) {
                 paletteColors.forEachIndexed { index, color ->
                     val isSelected = selectedPaletteIndex == index
+                    // Color Circle with Border
                     Box(
                         modifier = Modifier
                             .size(if (isSelected) colorSize + 8.dp else colorSize)
@@ -238,7 +239,7 @@ fun StyledLeftToolBar(
                             .background(color)
                             .border(
                                 width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f), // Subtle border for unselected
                                 shape = CircleShape
                             )
                             .clickable { onPaletteSlotClicked(index) }

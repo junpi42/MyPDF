@@ -169,7 +169,8 @@ fun TunerSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(s.tunerExtendedMode, style = MaterialTheme.typography.bodyLarge)
+                    // Update label to reflect the border behavior
+                    Text("Border Visualization", style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = extendedMode, onCheckedChange = { onToggleExtendedMode() })
                 }
             }

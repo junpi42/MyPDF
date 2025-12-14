@@ -85,16 +85,16 @@ class CloudSyncManager(private val context: Context, private val driveService: G
         // For every item in Drive, ensure we have it locally or handle deleted.
         for (rItem in remoteItems) {
             val rName = rItem.name
-            val rMime = rItem.mimeType
-            val isFolder = rMime == "application/vnd.google-apps.folder"
-            
+            val isFolder = rItem.mimeType == "application/vnd.google-apps.folder"
+
             // Construct relative path for this item
             val itemRelativePath = if (relativePathPrefix.isEmpty()) rName else "$relativePathPrefix/$rName"
-            
+
             // Track existence
             allCurrentPaths.add(itemRelativePath)
 
-            if (!localMap.containsKey(rName)) {
+            val localItem = localMap[rName]
+            if (localItem == null) {
                 // Remote exists, Local MISSING
                 if (knownPaths.contains(itemRelativePath)) {
                     // It WAS known, so it must have been deleted locally -> DELETE REMOTE
@@ -109,11 +109,11 @@ class CloudSyncManager(private val context: Context, private val driveService: G
                         e.printStackTrace()
                     }
                 } else {
-                    // It was NOT known -> New file from other device -> CONFLICT/DOWNLOAD
+                    // It was NOT known -> New file from other device -> DOWNLOAD
                     if (isFolder) {
                         // Create local directory
                         val newLocalDir = File(localDir, rName)
-                        if (newLocalDir.mkdir()) {
+                        if (!newLocalDir.exists() && newLocalDir.mkdirs()) {
                             addToKnown(itemRelativePath)
                             // Recurse into this new folder
                             syncFolder(newLocalDir, rItem.id, itemRelativePath, allCurrentPaths)
@@ -123,6 +123,7 @@ class CloudSyncManager(private val context: Context, private val driveService: G
                         val destFile = File(localDir, rName)
                         try {
                             driveService.downloadFile(rItem.id, destFile)
+                            rItem.modifiedTime?.value?.let { destFile.setLastModified(it) }
                             addToKnown(itemRelativePath)
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -131,48 +132,47 @@ class CloudSyncManager(private val context: Context, private val driveService: G
                         }
                     }
                 }
-                // Both exist -> SYNCED or UPDATE
-                val localItem = localMap[rName]!!
-                
-                if (isFolder && localItem.isDirectory) {
-                    // Recurse (already adds to known)
-                    addToKnown(itemRelativePath)
-                    syncFolder(localItem, rItem.id, itemRelativePath, allCurrentPaths)
-                } else if (!isFolder && localItem.isFile) {
-                    // FILE: Check timestamps for updates
-                    // Drive time is rItem.modifiedTime (DateTime from API)
-                    // Local time is localItem.lastModified() (Long millis)
-                    
-                    val remoteTime = rItem.modifiedTime?.value ?: 0L
-                    val localTime = localItem.lastModified()
-                    
-                    // Simple logic: If difference > 2 seconds (buffer), sync newest
-                    if (remoteTime > localTime + 2000) {
-                        // Remote is newer -> Download
-                        try {
-                           driveService.downloadFile(rItem.id, localItem)
-                           localItem.setLastModified(remoteTime) // Try to sync timestamps
-                           addToKnown(itemRelativePath)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    } else if (localTime > remoteTime + 2000) {
-                        // Local is newer -> Upload
-                        try {
-                            driveService.updateFile(localItem, rItem.id) // Need updateFile in Service
-                            addToKnown(itemRelativePath)
-                        } catch (e: Exception) {
-                            // If update fails, maybe re-upload? simpler to catch
-                            e.printStackTrace()
-                        }
-                    } else {
-                        // In sync
+                continue
+            }
+
+            // Both exist -> SYNCED or UPDATE
+            if (isFolder && localItem.isDirectory) {
+                addToKnown(itemRelativePath)
+                syncFolder(localItem, rItem.id, itemRelativePath, allCurrentPaths)
+                continue
+            }
+
+            if (!isFolder && localItem.isFile) {
+                val remoteTime = rItem.modifiedTime?.value ?: 0L
+                val localTime = localItem.lastModified()
+
+                // Simple logic: If difference > 2 seconds (buffer), sync newest
+                if (remoteTime > localTime + 2000) {
+                    // Remote is newer -> Download
+                    try {
+                        driveService.downloadFile(rItem.id, localItem)
+                        localItem.setLastModified(remoteTime) // Try to sync timestamps
                         addToKnown(itemRelativePath)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                } else if (localTime > remoteTime + 2000) {
+                    // Local is newer -> Upload
+                    try {
+                        driveService.updateFile(localItem, rItem.id)
+                        addToKnown(itemRelativePath)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
                 } else {
-                    // Type mismatch (folder vs file)? For now ignore or overwrite.
+                    // In sync
                     addToKnown(itemRelativePath)
                 }
+                continue
+            }
+
+            // Type mismatch (folder vs file)
+            addToKnown(itemRelativePath)
         }
 
         // --- D. Process Local Items (Upwards) ---
@@ -180,9 +180,14 @@ class CloudSyncManager(private val context: Context, private val driveService: G
         for (lItem in localItems) {
             val lName = lItem.name
             val isFolder = lItem.isDirectory
-            // Skip non-pdf files if strictly required, but for "structure" usually we sync all or specific types
-            // For this app, let's sync folders and PDF files.
-            if (!isFolder && lItem.extension.lowercase() != "pdf") continue
+            // Skip non-pdf/json files if strictly required, but for "structure" usually we sync all or specific types
+            // For this app, let's sync folders, PDF files, and JSON (annotations/prefs).
+            val ext = lItem.extension.lowercase()
+            android.util.Log.d("CloudSync", "Checking local file: $lName, ext: $ext, isFolder: $isFolder")
+            if (!isFolder && ext != "pdf" && ext != "json") {
+                android.util.Log.d("CloudSync", "Skipping $lName (invalid extension)")
+                continue
+            }
 
             val itemRelativePath = if (relativePathPrefix.isEmpty()) lName else "$relativePathPrefix/$lName"
             allCurrentPaths.add(itemRelativePath)
@@ -266,6 +271,5 @@ class CloudSyncManager(private val context: Context, private val driveService: G
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
     }
 }
