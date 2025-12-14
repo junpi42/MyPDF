@@ -135,7 +135,32 @@ class MainActivity : ComponentActivity() {
                     Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
                 }
             }
-            // ----------------------------
+
+            // --- SYNC LOGIC ---
+            var syncTrigger by remember { mutableIntStateOf(0) }
+            val triggerSync: () -> Unit = { syncTrigger++ }
+            var refreshTrigger by remember { mutableIntStateOf(0) }
+
+            LaunchedEffect(googleAccount, syncTrigger) {
+                googleAccount?.let { account ->
+                    val driveService = GoogleDriveService(context, account)
+                    val syncManager = CloudSyncManager(context, driveService)
+                    Toast.makeText(context, "Cloud Syncing...", Toast.LENGTH_SHORT).show()
+                    try {
+                        syncManager.sync()
+                        Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show()
+                        // Ensure UI reflects changes (downloads/deletes)
+                        refreshTrigger++ // Signal UI to refresh
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Job cancelled (user rotated or signed out or navigated), ignore.
+                        throw e 
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Sync Failed: ${e.message}", Toast.LENGTH_LONG).show()
+                        e.printStackTrace()
+                    }
+                }
+            }
+            // ------------------
 
             // Helper to save settings
             fun save() {
@@ -191,7 +216,9 @@ class MainActivity : ComponentActivity() {
                                 onResetTutorial = { tutorialCompleted = false; save() },
                                 googleAccount = googleAccount,
                                 onSignIn = { doSignIn() },
-                                onSignOut = { doSignOut() }
+                                onSignOut = { doSignOut() },
+                                onSyncNow = triggerSync,
+                                refreshTrigger = refreshTrigger
                             )
                         }
                     }
@@ -217,7 +244,9 @@ private fun AppRootAdaptive(
     onResetTutorial: () -> Unit,
     googleAccount: GoogleSignInAccount?,
     onSignIn: () -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    refreshTrigger: Int
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
@@ -264,7 +293,9 @@ private fun AppRootAdaptive(
                     onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
                     googleAccount = googleAccount,
                     onSignIn = onSignIn,
-                    onSignOut = onSignOut
+                    onSignOut = onSignOut,
+                    onSyncNow = onSyncNow,
+                    refreshTrigger = refreshTrigger
                 )
             } else {
                 PdfEditScreen(
@@ -314,7 +345,9 @@ fun LibraryScreen(
     onTutorialStateChange: (TutorialState) -> Unit,
     googleAccount: GoogleSignInAccount?,
     onSignIn: () -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    refreshTrigger: Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -505,6 +538,7 @@ fun LibraryScreen(
     LaunchedEffect(Unit) { refreshCategories() }
     LaunchedEffect(selectedCategory) { loadCategory(selectedCategory) }
     LaunchedEffect(query) { searchEverywhere(query) }
+    LaunchedEffect(refreshTrigger) { refreshCategories(); loadCategory(selectedCategory) }
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -529,6 +563,8 @@ fun LibraryScreen(
                 loadCategory(selectedCategory)
                 Toast.makeText(context, "PDF importado ✓", Toast.LENGTH_SHORT).show()
                 loading = false
+                // TRIGGER SYNC ON IMPORT
+                onSyncNow() 
             }
         }
     )
@@ -800,6 +836,12 @@ fun LibraryScreen(
                                 Toast.makeText(context, s.deleteError, Toast.LENGTH_SHORT).show()
                             }
                             showDeleteDialog = false
+                            
+                            // SYNC: Delete from Drive if logged in
+                            if (success && googleAccount != null) {
+                                // Trigger a sync to propagate deletion cleanly (Recursive Logic)
+                                onSyncNow()
+                            }
                         }
                     }
                 ) { Text(s.delete, color = MaterialTheme.colorScheme.error) }
@@ -841,6 +883,7 @@ fun LibraryScreen(
             googleAccount = googleAccount,
             onSignIn = onSignIn,
             onSignOut = onSignOut,
+            onSyncNow = onSyncNow,
             onDismiss = { showSettingsDialog = false }
         )
     }

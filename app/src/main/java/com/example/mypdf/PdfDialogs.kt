@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -192,9 +194,10 @@ fun SettingsDialog(
     onColumnsChange: (Int) -> Unit,
     onResetTutorial: () -> Unit,
     // Google Sync
-    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount?,
+    googleAccount: GoogleSignInAccount?,
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val s = strings()
@@ -217,7 +220,10 @@ fun SettingsDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
                 // Cloud Sync Section
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -250,26 +256,28 @@ fun SettingsDialog(
                                         )
                                     }
                                     Spacer(Modifier.width(12.dp))
-                                    Column {
-                                        Text(
-                                            text = googleAccount.displayName ?: "User",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                        Text(
-                                            text = googleAccount.email ?: "",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                        )
-                                    }
+                                    Text(
+                                        text = googleAccount.email ?: "Signed In", 
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = onSignOut,
-                                    modifier = Modifier.align(Alignment.End),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Text("Sign Out")
+                                Spacer(Modifier.height(12.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = onSyncNow,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Sincronizar")
+                                    }
+                                    Button(
+                                        onClick = onSignOut,
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
+                                    ) {
+                                        Text("Salir")
+                                    }
                                 }
                             }
                         }

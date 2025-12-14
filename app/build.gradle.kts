@@ -87,6 +87,8 @@ dependencies {
     implementation("com.google.api-client:google-api-client-android:2.4.0")
     implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
     implementation("com.google.auth:google-auth-library-oauth2-http:1.23.0")
+    implementation("com.google.http-client:google-http-client-android:1.44.1")
+    implementation("com.google.http-client:google-http-client-gson:1.44.1")
 
     // --- DEPENDENCIAS DE TEST ---
     testImplementation(libs.junit)
