@@ -613,7 +613,7 @@ fun PdfViewerScreen(
             }
 
             // Top bar para tablets
-            if (deviceType != DeviceType.PHONE) {
+            if (deviceType != DeviceType.PHONE && !concertModeOn) {
                 Box(modifier = Modifier.zIndex(10f)) {
                     StyledTopBar(
                         onBack = onBack,
@@ -1421,37 +1421,39 @@ private fun PdfEditModePhone(
 ) {
     Scaffold(
         topBar = {
-            StyledTopBar(
-                onBack = onBack,
-                tunerOn = tunerOn,
-                concertModeOn = concertModeOn,
-                highlightBack = false,
-                onTunerClick = onTunerClick,
-                onConcertClick = onConcertClick,
-                darkMode = darkMode,
-                onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
-                onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
-                onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
-                centerContent = {
-                    if (tunerOn) {
-                        TunnerSmall(
-                            tunner = tunner,
-                            isDaltonic = isDaltonic,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .onGloballyPositioned { coords ->
-                                    onUpdateTutorialTarget {
-                                        it.copy(
-                                            tunerDisplay = coords.boundsInRoot()
-                                        )
-                                    }
-                                },
-                            onClick = onShowTunerSettings
-                        )
+            if (!concertModeOn) {
+                StyledTopBar(
+                    onBack = onBack,
+                    tunerOn = tunerOn,
+                    concertModeOn = concertModeOn,
+                    highlightBack = false,
+                    onTunerClick = onTunerClick,
+                    onConcertClick = onConcertClick,
+                    darkMode = darkMode,
+                    onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
+                    onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
+                    onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
+                    centerContent = {
+                        if (tunerOn) {
+                            TunnerSmall(
+                                tunner = tunner,
+                                isDaltonic = isDaltonic,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .onGloballyPositioned { coords ->
+                                        onUpdateTutorialTarget {
+                                            it.copy(
+                                                tunerDisplay = coords.boundsInRoot()
+                                            )
+                                        }
+                                    },
+                                onClick = onShowTunerSettings
+                            )
+                        }
                     }
-                }
-            )
+                )
+            }
         },
         bottomBar = {
             // Bottom Toolbar for Phone
@@ -1574,8 +1576,7 @@ private fun PdfEditModePhone(
                     TunerSettingsDialog(
                         tuner = tunner,
                         isDaltonic = isDaltonic,
-                        tunerExtendedMode = tunerExtendedMode,
-                        showTunerSettings = showTunerSettings,
+
                         onToggleDaltonic = onToggleDaltonic,
                         extendedMode = tunerExtendedMode,
                         onToggleExtendedMode = onToggleExtendedMode,

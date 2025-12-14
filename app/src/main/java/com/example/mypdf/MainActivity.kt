@@ -37,8 +37,14 @@ import java.io.File
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.WindowInsets
 import com.example.mypdf.ui.theme.MyPDFTheme
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.tasks.Task
 
 // PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
 // <<< PERF IMPORTS <<<
@@ -84,7 +90,52 @@ class MainActivity : ComponentActivity() {
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
             var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
+
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
+
+            // --- Google Sign In State ---
+            var googleAccount by remember { mutableStateOf<GoogleSignInAccount?>(null) }
+            
+            // Check for existing sign-in on launch
+            LaunchedEffect(Unit) {
+                googleAccount = GoogleSignIn.getLastSignedInAccount(context)
+            }
+
+            val gso = remember {
+                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                    .requestEmail()
+                    .requestProfile()
+                    .requestScopes(com.google.android.gms.common.api.Scope(com.google.api.services.drive.DriveScopes.DRIVE_FILE))
+                    .build()
+            }
+            val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+            val googleSignInLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == android.app.Activity.RESULT_OK) {
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    try {
+                        googleAccount = task.getResult(ApiException::class.java)
+                        Toast.makeText(context, "Signed in as ${googleAccount?.displayName}", Toast.LENGTH_SHORT).show()
+                    } catch (e: ApiException) {
+                        Toast.makeText(context, "Sign in failed: ${e.statusCode}", Toast.LENGTH_SHORT).show()
+                        googleAccount = null
+                    }
+                }
+            }
+
+            fun doSignIn() {
+                googleSignInLauncher.launch(googleSignInClient.signInIntent)
+            }
+
+            fun doSignOut() {
+                googleSignInClient.signOut().addOnCompleteListener {
+                    googleAccount = null
+                    Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
+                }
+            }
+            // ----------------------------
 
             // Helper to save settings
             fun save() {
@@ -134,9 +185,13 @@ class MainActivity : ComponentActivity() {
                                 },
                                 gridScale = gridScale,
                                 onGridScaleChange = { gridScale = it; save() },
+
                                 tutorialCompleted = tutorialCompleted,
                                 onTutorialComplete = { tutorialCompleted = true; save() },
-                                onResetTutorial = { tutorialCompleted = false; save() }
+                                onResetTutorial = { tutorialCompleted = false; save() },
+                                googleAccount = googleAccount,
+                                onSignIn = { doSignIn() },
+                                onSignOut = { doSignOut() }
                             )
                         }
                     }
@@ -159,7 +214,10 @@ private fun AppRootAdaptive(
     onGridScaleChange: (Float) -> Unit,
     tutorialCompleted: Boolean,
     onTutorialComplete: () -> Unit,
-    onResetTutorial: () -> Unit
+    onResetTutorial: () -> Unit,
+    googleAccount: GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
@@ -200,11 +258,13 @@ private fun AppRootAdaptive(
                     onTutorialComplete = {
                         onTutorialComplete()
                         tutorialStep = TutorialStep.NONE
-                        tutorialTargetRect = null
                     },
                     onResetTutorial = onResetTutorial,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect }
+                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
+                    googleAccount = googleAccount,
+                    onSignIn = onSignIn,
+                    onSignOut = onSignOut
                 )
             } else {
                 PdfEditScreen(
@@ -251,7 +311,10 @@ fun LibraryScreen(
     onTutorialComplete: () -> Unit,
     onResetTutorial: () -> Unit,
     tutorialState: TutorialState,
-    onTutorialStateChange: (TutorialState) -> Unit
+    onTutorialStateChange: (TutorialState) -> Unit,
+    googleAccount: GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -775,6 +838,9 @@ fun LibraryScreen(
                 onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
                 showSettingsDialog = false
             },
+            googleAccount = googleAccount,
+            onSignIn = onSignIn,
+            onSignOut = onSignOut,
             onDismiss = { showSettingsDialog = false }
         )
     }

@@ -17,6 +17,9 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.automirrored.filled.Login
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -188,6 +191,10 @@ fun SettingsDialog(
     gridColumns: Int,
     onColumnsChange: (Int) -> Unit,
     onResetTutorial: () -> Unit,
+    // Google Sync
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val s = strings()
@@ -211,6 +218,76 @@ fun SettingsDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // Cloud Sync Section
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Cloud Sync", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    
+                    if (googleAccount != null) {
+                        // Logged In
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // Profile Pic (Placeholder or coil if available, simplified here)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = googleAccount.displayName?.take(1) ?: "U",
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = googleAccount.displayName ?: "User",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Text(
+                                            text = googleAccount.email ?: "",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = onSignOut,
+                                    modifier = Modifier.align(Alignment.End),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("Sign Out")
+                                }
+                            }
+                        }
+                    } else {
+                        // Signed Out
+                        OutlinedButton(
+                            onClick = onSignIn,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(s.googleSignIn) // Use string resource
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 // Theme
                 Row(
                     modifier = Modifier.fillMaxWidth(),
