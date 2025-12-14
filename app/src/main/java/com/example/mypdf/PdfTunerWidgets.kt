@@ -25,7 +25,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,17 +44,19 @@ fun TunnerSmall(
 ) {
     val state by tunner.tuningState.collectAsState(initial = null)
 
-    val bg = when (val s = state) {
-        null -> Color.DarkGray
+    // Premium Logic: Dark semi-transparent background, Color indicates status via Border/Text
+    val statusColor = when (val s = state) {
+        null -> Color.Gray
         else -> when {
-            s.isInTune -> if (isDaltonic) Color(0xFF00BCD4) else Color(0xFF4CAF50)
-            s.centsOff > 10.0 -> if (isDaltonic) Color(0xFFFF9800) else Color(0xFFE53935)
-            s.centsOff < -10.0 -> if (isDaltonic) Color(0xFFFF00FF) else Color(0xFF1E88E5)
-            else -> Color(0xFFFFA000)
+            s.isInTune -> if (isDaltonic) Color(0xFF00BCD4) else Color(0xFF4CAF50) // Green/Cyan
+            s.centsOff > 10.0 -> if (isDaltonic) Color(0xFFFF9800) else Color(0xFFE53935) // Red/Orange
+            s.centsOff < -10.0 -> if (isDaltonic) Color(0xFFFF00FF) else Color(0xFF1E88E5) // Blue/Magenta
+            else -> Color(0xFFFFA000) // Yellow (Close)
         }
     }
 
-    val markerColor = if (bg.luminance() > 0.5f) Color.Black else Color.White
+    val backgroundColor = Color.Black.copy(alpha = 0.6f) // Dark semi-transparent
+    val contentColor = Color.White
 
     val cents = (state?.centsOff ?: 0.0).coerceIn(-50.0, 50.0)
     val normalized = (cents / 50.0).toFloat().coerceIn(-1f, 1f)
@@ -65,92 +69,61 @@ fun TunnerSmall(
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(bg)
-            .clickable { onClick() },
+            .clip(RoundedCornerShape(24.dp)) // Pill shape
+            .background(backgroundColor)
+            .border(3.dp, statusColor, RoundedCornerShape(24.dp)) // Thicker border (3.dp) and solid color (no alpha)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp), // Check padding
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            val w = size.width
-            val h = size.height
+        
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+             Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
 
-            val centerX = w / 2f
-            val range = w * 0.42f
-            val x = centerX + animNorm * range
+                val centerX = w / 2f
+                val range = w * 0.42f
+                // Scale indicator
+                val x = centerX + animNorm * range
+                
+                // --- Target Zone Visualization ---
+                // Draw a rectangle in the center representing the "in-tune" range (+/- 12 cents approx)
+                val inTuneThresholdNorm = (12.0 / 50.0).toFloat() // Based on logic
+                val zoneWidth = range * inTuneThresholdNorm * 2 // Total width of zone
+                
+                drawRect(
+                    color = Color.White.copy(alpha = 0.15f),
+                    topLeft = Offset(centerX - zoneWidth / 2f, h * 0.2f),
+                    size = androidx.compose.ui.geometry.Size(zoneWidth, h * 0.6f)
+                )
 
-            val triW = h * 0.32f
-            val triH = h * 0.30f
+                // Optional: Center Line distinct
+                drawLine(
+                    color = Color.White.copy(alpha = 0.5f),
+                    start = Offset(centerX, h * 0.2f),
+                    end = Offset(centerX, h * 0.8f),
+                    strokeWidth = 2.dp.toPx()
+                )
 
-            val inTuneCents = 12.0
-            val maxCents = 50.0
-            val normLimit = (inTuneCents / maxCents).toFloat()
-
-            val tickLen = h * 0.18f
-            val tickStroke = h * 0.04f
-            val halfStroke = tickStroke / 2f
-
-            val topTri = Path().apply {
-                moveTo(x - triW / 2f, -halfStroke)
-                lineTo(x + triW / 2f, -halfStroke)
-                lineTo(x, triH)
-                close()
+                // Draw Moving Indicator
+                drawLine(
+                    color = statusColor,
+                    start = Offset(x, h * 0.2f), // Top
+                    end = Offset(x, h * 0.8f),   // Bottom
+                    strokeWidth = 4.dp.toPx(), // Slightly thicker indicator
+                    cap = StrokeCap.Round
+                )
             }
 
-            val bottomTri = Path().apply {
-                moveTo(x - triW / 2f, h + halfStroke)
-                lineTo(x + triW / 2f, h + halfStroke)
-                lineTo(x, h - triH)
-                close()
-            }
-
-            drawPath(topTri, color = markerColor)
-            drawPath(bottomTri, color = markerColor)
-
-            val xLeft = centerX - normLimit * range
-            val xRight = centerX + normLimit * range
-
-            drawLine(
-                color = markerColor,
-                start = Offset(xLeft, -halfStroke),
-                end = Offset(xLeft, tickLen),
-                strokeWidth = tickStroke
-            )
-            drawLine(
-                color = markerColor,
-                start = Offset(xRight, -halfStroke),
-                end = Offset(xRight, tickLen),
-                strokeWidth = tickStroke
-            )
-
-            drawLine(
-                color = markerColor,
-                start = Offset(xLeft, h + halfStroke),
-                end = Offset(xLeft, h - tickLen),
-                strokeWidth = tickStroke
-            )
-            drawLine(
-                color = markerColor,
-                start = Offset(xRight, h + halfStroke),
-                end = Offset(xRight, h - tickLen),
-                strokeWidth = tickStroke
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            val note = state?.targetNote
-                ?.replace(Regex("\\d+"), "")
-                ?: "--"
-
+            // Note Name Centered
+            val note = state?.targetNote?.replace(Regex("\\d+"), "") ?: "--"
             Text(
                 text = note,
-                color = Color.Black,
+                color = contentColor,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center)
             )
         }
     }

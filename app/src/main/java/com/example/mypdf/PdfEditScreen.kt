@@ -14,7 +14,12 @@ fun PdfEditScreen(
     language: Language,
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
-    onTutorialComplete: () -> Unit
+    onTutorialComplete: () -> Unit,
+    refreshTrigger: Int = 0,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    enableStylusPressure: Boolean,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
     PdfViewerScreen(
         deviceType = deviceType,
@@ -26,6 +31,11 @@ fun PdfEditScreen(
         language = language,
         tutorialState = tutorialState,
         onTutorialStateChange = onTutorialStateChange,
-        onTutorialComplete = onTutorialComplete
+        onTutorialComplete = onTutorialComplete,
+        refreshTrigger = refreshTrigger,
+        isVerticalScroll = isVerticalScroll,
+        onVerticalScrollChange = onVerticalScrollChange,
+        enableStylusPressure = enableStylusPressure,
+        onEnableStylusPressureChange = onEnableStylusPressureChange
     )
 }

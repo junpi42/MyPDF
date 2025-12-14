@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,7 +81,8 @@ fun StyledLeftToolBar(
     onEraserRadiusChange: (Float) -> Unit = {},
     // Parámetro para presión capacitiva del stylus
     enableStylusPressure: Boolean = true,
-    onEnableStylusPressureChange: (Boolean) -> Unit = {}
+    onEnableStylusPressureChange: (Boolean) -> Unit = {},
+    onShowSettings: () -> Unit = {}
 ) {
     val s = strings()
     val config = LocalConfiguration.current
@@ -231,6 +233,7 @@ fun StyledLeftToolBar(
             ) {
                 paletteColors.forEachIndexed { index, color ->
                     val isSelected = selectedPaletteIndex == index
+                    // Color Circle with Border
                     Box(
                         modifier = Modifier
                             .size(if (isSelected) colorSize + 8.dp else colorSize)
@@ -238,7 +241,7 @@ fun StyledLeftToolBar(
                             .background(color)
                             .border(
                                 width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f), // Subtle border for unselected
                                 shape = CircleShape
                             )
                             .clickable { onPaletteSlotClicked(index) }
@@ -252,45 +255,6 @@ fun StyledLeftToolBar(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
             Spacer(Modifier.height(8.dp))
-
-            // --- Preview ---
-            if (selectedTool == "marker" || selectedTool == "highlighter") {
-                Box(
-                    modifier = Modifier
-                        .size(height = if (showSlider) 120.dp else 80.dp, width = 48.dp)
-                        .padding(4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val currentColor = paletteColors.getOrNull(selectedPaletteIndex) ?: Color.Black
-                    val previewColor = if (selectedTool == "highlighter") currentColor.copy(alpha = 0.5f) else currentColor
-
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val path = Path().apply {
-                            // Start from top center
-                            moveTo(size.width * 0.5f, 0f)
-                            // Curve 1
-                            quadraticBezierTo(
-                                size.width, size.height * 0.25f,
-                                size.width * 0.5f, size.height * 0.5f
-                            )
-                            // Curve 2
-                            quadraticBezierTo(
-                                0f, size.height * 0.75f,
-                                size.width * 0.5f, size.height
-                            )
-                        }
-                        drawPath(
-                            path = path,
-                            color = previewColor,
-                            style = Stroke(
-                                width = strokeWidth * 1000f,
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
-                            )
-                        )
-                    }
-                }
-            }
 
             // --- Slider Group (solo si showSlider es true) ---
             if (showSlider && (selectedTool == "marker" || selectedTool == "eraser" || selectedTool == "highlighter")) {
@@ -338,6 +302,24 @@ fun StyledLeftToolBar(
             } else {
                 Spacer(modifier = Modifier.weight(1f))
             }
+
+            // --- Settings Button (Bottom) ---
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(
+                 modifier = Modifier.width(40.dp),
+                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+            Spacer(Modifier.height(8.dp))
+            
+            StyledToolButton(
+                icon = Icons.Default.Settings,
+                label = s.editorSettings,
+                selected = false,
+                onClick = onShowSettings,
+                size = buttonSize,
+                iconSize = iconSize,
+                enabled = true
+            )
         }
     }
 

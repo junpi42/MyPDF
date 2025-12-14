@@ -104,7 +104,8 @@ class GoogleDriveService(context: Context, account: GoogleSignInAccount) {
         val fileMetadata = File()
         fileMetadata.name = localFile.name
         
-        val mediaContent = FileContent("application/pdf", localFile) // Assuming PDFs mostly
+        val mimeType = if (localFile.extension.equals("json", ignoreCase = true)) "application/json" else "application/pdf"
+        val mediaContent = FileContent(mimeType, localFile)
 
         if (existingFiles.files.isNotEmpty()) {
             // Update
@@ -133,5 +134,21 @@ class GoogleDriveService(context: Context, account: GoogleSignInAccount) {
     
     suspend fun deleteFile(fileId: String) = withContext(Dispatchers.IO) {
         driveService.files().delete(fileId).execute()
+    }
+
+    suspend fun updateFile(localFile: java.io.File, fileId: String): String = withContext(Dispatchers.IO) {
+        val mimeType = if (localFile.extension.equals("json", ignoreCase = true)) {
+            "application/json"
+        } else if (localFile.extension.equals("pdf", ignoreCase = true)) {
+            "application/pdf"
+        } else {
+            "application/octet-stream"
+        }
+        val mediaContent = FileContent(mimeType, localFile)
+        val fileMetadata = File().apply { name = localFile.name }
+        val updatedFile = driveService.files().update(fileId, fileMetadata, mediaContent)
+            .setFields("id, modifiedTime")
+            .execute()
+        return@withContext updatedFile.id
     }
 }

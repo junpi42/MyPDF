@@ -50,6 +50,8 @@ private enum class OnboardingStep {
 @Composable
 fun OnboardingDialog(
     initialLanguage: Language,
+    googleAccount: com.google.android.gms.auth.api.signin.GoogleSignInAccount?,
+    onGoogleSignIn: () -> Unit,
     onFinish: (Language, Boolean, Boolean) -> Unit
 ) {
     // State for the onboarding flow
@@ -88,6 +90,14 @@ fun OnboardingDialog(
         if (currentStep == OnboardingStep.Loading) {
             delay(2000) // Simulate configuration
             onFinish(currentLanguage, isDarkMode, isDaltonic)
+        }
+    }
+    
+    // Auto-advance on Sign In
+    LaunchedEffect(googleAccount) {
+        if (googleAccount != null && currentStep == OnboardingStep.Login) {
+            // User signed in successfully -> Skip configuration for returning users
+            currentStep = OnboardingStep.Loading
         }
     }
 
@@ -204,7 +214,7 @@ fun OnboardingDialog(
 
                                 // Google Sign In
                                 OutlinedButton(
-                                    onClick = { currentStep = OnboardingStep.Loading },
+                                    onClick = onGoogleSignIn,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(56.dp),

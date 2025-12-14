@@ -169,7 +169,8 @@ fun TunerSettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(s.tunerExtendedMode, style = MaterialTheme.typography.bodyLarge)
+                    // Update label to reflect the border behavior
+                    Text("Border Visualization", style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = extendedMode, onCheckedChange = { onToggleExtendedMode() })
                 }
             }
@@ -360,26 +361,6 @@ fun SettingsDialog(
                         }
                     }
                 }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Daltonic
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.width(16.dp))
-                        Text(s.daltonismOption, style = MaterialTheme.typography.titleMedium)
-                    }
-                    Switch(checked = isDaltonic, onCheckedChange = { onToggleDaltonic() })
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                MetronomeColorPreview(isDaltonic = isDaltonic)
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 

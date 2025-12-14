@@ -11,7 +11,9 @@ data class AppSettings(
     val isDarkMode: Boolean = false,
     val isDaltonic: Boolean = false,
     val gridScale: Float = 1.0f,
-    val tutorialCompleted: Boolean = false
+    val tutorialCompleted: Boolean = false,
+    val isVerticalScroll: Boolean = true,
+    val enableStylusPressure: Boolean = true
 )
 
 object SettingsManager {

@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -95,7 +98,12 @@ fun PdfViewerScreen(
     language: Language,
     tutorialState: TutorialState,
     onTutorialStateChange: (TutorialState) -> Unit,
-    onTutorialComplete: () -> Unit
+    onTutorialComplete: () -> Unit,
+    refreshTrigger: Int = 0,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    enableStylusPressure: Boolean,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -215,15 +223,7 @@ fun PdfViewerScreen(
     var offsetY by remember { mutableFloatStateOf(0f) }
     var isPinching by remember { mutableStateOf(false) }
 
-    // Handle Back Press
-    BackHandler(enabled = true) {
-        if (concertModeOn) {
-            eyeControlEnabled = false  // Desactivar eye control al salir
-            concertModeOn = false
-        } else {
-            onBack()
-        }
-    }
+
 
     // Metronome State
     var metronomeOn by remember { mutableStateOf(false) }
@@ -399,34 +399,40 @@ fun PdfViewerScreen(
     }
     var saveJob by remember { mutableStateOf<Job?>(null) }
 
+    suspend fun saveAnnotationsToDisk() {
+        runCatching {
+            val pages = JSONArray()
+            annotations.toSortedMap().forEach { (idx, page) ->
+                val jPaths = JSONArray()
+                page.paths.forEach { p ->
+                    val pts = JSONArray().also { arr ->
+                        p.points.forEach { o -> arr.put(JSONArray().put(o.x).put(o.y)) }
+                    }
+                    jPaths.put(
+                        JSONObject()
+                            .put("e", p.isEraser)
+                            .put("c", p.color.toArgb())
+                            .put("w", p.strokeWidth)
+                            .put("pts", pts)
+                    )
+                }
+                pages.put(JSONObject().put("index", idx).put("paths", jPaths))
+            }
+            val root = JSONObject().put("version", 1).put("pages", pages)
+            val tmp = File(annFile.parentFile, annFile.name + ".tmp")
+            withContext(Dispatchers.IO) {
+                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
+            }
+            if (annFile.exists()) annFile.delete()
+            tmp.renameTo(annFile)
+        }
+    }
+
     val scheduleSave: () -> Unit = {
         saveJob?.cancel()
         saveJob = scope.launch(Dispatchers.IO) {
             delay(400)
-            runCatching {
-                val pages = JSONArray()
-                annotations.toSortedMap().forEach { (idx, page) ->
-                    val jPaths = JSONArray()
-                    page.paths.forEach { p ->
-                        val pts = JSONArray().also { arr ->
-                            p.points.forEach { o -> arr.put(JSONArray().put(o.x).put(o.y)) }
-                        }
-                        jPaths.put(
-                            JSONObject()
-                                .put("e", p.isEraser)
-                                .put("c", p.color.toArgb())
-                                .put("w", p.strokeWidth)
-                                .put("pts", pts)
-                        )
-                    }
-                    pages.put(JSONObject().put("index", idx).put("paths", jPaths))
-                }
-                val root = JSONObject().put("version", 1).put("pages", pages)
-                val tmp = File(annFile.parentFile, annFile.name + ".tmp")
-                FileOutputStream(tmp).use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
-                if (annFile.exists()) annFile.delete()
-                tmp.renameTo(annFile)
-            }
+            saveAnnotationsToDisk()
         }
     }
 
@@ -445,6 +451,26 @@ fun PdfViewerScreen(
     // Guardar preferencias cuando cambian
     LaunchedEffect(stylusButtonTool, enableStylusPressure) {
         saveStylusPreferences()
+    }
+
+
+    // Replaced Back Handling with flush logic
+    val handleBack: () -> Unit = {
+        if (concertModeOn) {
+            eyeControlEnabled = false
+            concertModeOn = false
+        } else {
+            scope.launch {
+                saveAnnotationsToDisk()
+                withContext(Dispatchers.Main) {
+                    onBack()
+                }
+            }
+        }
+    }
+
+    BackHandler(enabled = true) {
+        handleBack()
     }
 
     fun snapshotAnnotations(): Map<Int, PageAnnotations> {
@@ -547,7 +573,7 @@ fun PdfViewerScreen(
     }
 
     // cargar anotaciones
-    LaunchedEffect(annFile.path) {
+    LaunchedEffect(annFile.path, refreshTrigger) {
         withContext(Dispatchers.IO) {
             if (!annFile.exists()) return@withContext
             runCatching {
@@ -597,6 +623,30 @@ fun PdfViewerScreen(
 
     Surface(modifier = Modifier.fillMaxSize(), color = screenBg) {
         Box(Modifier.fillMaxSize()) {
+            
+            // --- Extended Mode Border Overlay ---
+            // If Tuner is ON and Extended Mode is Enabled, draw a colored border around the screen
+            if (tunerOn && tunerExtendedMode) {
+                val tuneState = tunner.tuningState.collectAsState(initial = null).value
+                val borderColor = when (tuneState) {
+                    null -> Color.Transparent
+                    else -> when {
+                        tuneState.isInTune -> if (isDaltonic) Color(0xFF00BCD4) else Color(0xFF4CAF50) // Green/Cyan
+                        tuneState.centsOff > 10.0 -> if (isDaltonic) Color(0xFFFF9800) else Color(0xFFE53935) // Red/Orange
+                        tuneState.centsOff < -10.0 -> if (isDaltonic) Color(0xFFFF00FF) else Color(0xFF1E88E5) // Blue/Magenta
+                        else -> Color(0xFFFFA000) // Yellow (Close)
+                    }
+                }
+                
+                // Overlay Box with Border
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(100f) // Ensure it's on top of everything
+                        .border(12.dp, borderColor) // Thick border as requested (perimeter)
+                )
+            }
+
             // Lambdas locales necesarias para la top bar
             val onTunerClickLocal: () -> Unit = {
                 if (!tunerOn) {
@@ -610,6 +660,42 @@ fun PdfViewerScreen(
 
             val onUpdateTutorialTargetLocal: ((ViewerTutorialTargets) -> ViewerTutorialTargets) -> Unit = { transform ->
                 tutorialTargets = transform(tutorialTargets)
+            }
+
+            val onMetronomeClickLocal: () -> Unit = {
+                if (metronomeOn) {
+                    metronomeOn = false
+                    metronomeEngine.stop()
+                } else {
+                    if (!hasOpenedMetronomeSettings) {
+                        hasOpenedMetronomeSettings = true
+                        showMetronomeSettings = true
+                    }
+                    metronomeOn = true
+                    val pattern = when (metronomeTimeSignature.first) {
+                        2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                        3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                        4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                        6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                        else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                    }
+                    metronomeEngine.start(scope, metronomeBpm, pattern)
+                }
+            }
+
+            val onMetronomeLongClickLocal: () -> Unit = {
+                if (!metronomeOn) {
+                    metronomeOn = true
+                    val pattern = when (metronomeTimeSignature.first) {
+                        2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
+                        3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
+                        4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
+                        6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
+                        else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
+                    }
+                    metronomeEngine.start(scope, metronomeBpm, pattern)
+                }
+                showMetronomeSettings = true
             }
 
             // Top bar para tablets
@@ -629,40 +715,8 @@ fun PdfViewerScreen(
                     onConcertPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(concertButton = rect) } },
                     onBackPositioned = { rect -> onUpdateTutorialTargetLocal { vt -> vt.copy(backButton = rect) } },
                     metronomeOn = metronomeOn,
-                    onMetronomeClick = {
-                        if (metronomeOn) {
-                            metronomeOn = false
-                            metronomeEngine.stop()
-                        } else {
-                            if (!hasOpenedMetronomeSettings) {
-                                hasOpenedMetronomeSettings = true
-                                showMetronomeSettings = true
-                            }
-                            metronomeOn = true
-                            val pattern = when (metronomeTimeSignature.first) {
-                                2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
-                                3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
-                                4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
-                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
-                                else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
-                            }
-                            metronomeEngine.start(scope, metronomeBpm, pattern)
-                        }
-                    },
-                    onMetronomeLongClick = {
-                        if (!metronomeOn) {
-                            metronomeOn = true
-                            val pattern = when (metronomeTimeSignature.first) {
-                                2 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK)
-                                3 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK)
-                                4 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK)
-                                6 -> listOf(AccentLevel.STRONG, AccentLevel.WEAK, AccentLevel.WEAK, AccentLevel.MEDIUM, AccentLevel.WEAK, AccentLevel.WEAK)
-                                else -> List(metronomeTimeSignature.first) { if (it == 0) AccentLevel.STRONG else AccentLevel.WEAK }
-                            }
-                            metronomeEngine.start(scope, metronomeBpm, pattern)
-                        }
-                        showMetronomeSettings = true
-                    },
+                    onMetronomeClick = onMetronomeClickLocal,
+                    onMetronomeLongClick = onMetronomeLongClickLocal,
                     centerContent = {
                         if (tunerOn) {
                             TunnerSmall(
@@ -919,7 +973,7 @@ fun PdfViewerScreen(
                             highlighterStrokeWidth = highlighterStrokeWidth,
                             showColorPicker = showColorPicker,
                             language = language,
-                            onBack = onBack,
+                            onBack = handleBack,
                             tunerOn = tunerOn,
                             concertModeOn = concertModeOn,
                             onTunerClick = { if (!tunerOn) ensureMicPermission { tunerOn = true } else tunerOn = false },
@@ -969,7 +1023,13 @@ fun PdfViewerScreen(
                                 stylusLastSeenAt = System.currentTimeMillis()
                             },
                             onStylusButtonPressed = handleStylusButtonPress,
-                            enableStylusPressure = enableStylusPressure
+                            enableStylusPressure = enableStylusPressure,
+                            metronomeOn = metronomeOn,
+                            onMetronomeClick = onMetronomeClickLocal,
+                            onMetronomeLongClick = onMetronomeLongClickLocal,
+                            isVerticalScroll = isVerticalScroll,
+                            onVerticalScrollChange = onVerticalScrollChange,
+                            onEnableStylusPressureChange = onEnableStylusPressureChange
                         )
                     } else {
                         PdfEditModeTablet(
@@ -1007,7 +1067,7 @@ fun PdfViewerScreen(
                             highlighterStrokeWidth = highlighterStrokeWidth,
                             showColorPicker = showColorPicker,
                             language = language,
-                            onBack = onBack,
+                            onBack = handleBack,
                             tunerOn = tunerOn,
                             concertModeOn = concertModeOn,
                             onTunerClick = { if (!tunerOn) ensureMicPermission { tunerOn = true } else tunerOn = false },
@@ -1070,7 +1130,9 @@ fun PdfViewerScreen(
                             onEnableStylusPressureChange = { enableStylusPressure = it },
                             onPressureUpdate = {
                                 stylusLastSeenAt = System.currentTimeMillis()
-                            }
+                            },
+                            isVerticalScroll = isVerticalScroll,
+                            onVerticalScrollChange = onVerticalScrollChange
                         )
                     }
                     }
@@ -1207,7 +1269,9 @@ private fun PdfEditModeTablet(
     // Parámetros de presión capacitiva
     enableStylusPressure: Boolean = true,
     onEnableStylusPressureChange: (Boolean) -> Unit = {},
-    onPressureUpdate: (Float) -> Unit = {}
+    onPressureUpdate: (Float) -> Unit = {},
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit
 ) {
     val topBarHeight = 64.dp
     val config = LocalConfiguration.current
@@ -1219,11 +1283,12 @@ private fun PdfEditModeTablet(
     var toolboxBounds by remember { mutableStateOf<Rect?>(null) }
     
     // Posición de los botones individuales
-    @Suppress("UNUSED_VARIABLE")
     var markerButtonBounds by remember { mutableStateOf<Rect?>(null) }
-    @Suppress("UNUSED_VARIABLE")
     var highlighterButtonBounds by remember { mutableStateOf<Rect?>(null) }
-    
+
+    // Estado para el diálogo de ajustes del editor
+    var showEditorSettings by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1238,47 +1303,92 @@ private fun PdfEditModeTablet(
                 } else Modifier
             )
     ) {
-        LazyColumn(
-            state = listState,
-            userScrollEnabled = !isPinching && selectedTool == "none",
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offsetX,
-                    translationY = offsetY
-                ),
-            contentPadding = PaddingValues(bottom = 16.dp)
-        ) {
-            items(count = pageCount) { index ->
-                val bmp = pageBitmaps.getOrNull(index)
-                PdfPageItem(
-                    index = index,
-                    bitmap = bmp,
-                    showLoadingLabel = bmp == null,
-                    editMode = true,
-                    annotations = annotations[index] ?: PageAnnotations(index),
-                    selectedTool = selectedTool,
-                    currentColor = currentColor,
-                    currentStrokeWidth = when (selectedTool) {
-                        "marker" -> markerStrokeWidth
-                        "highlighter" -> highlighterStrokeWidth
-                        else -> markerStrokeWidth
-                    },
-                    eraserRadiusNorm = eraserRadiusNorm,
-                    smoothingEnabled = smoothingEnabled,
-                    onPathAdded = { path -> onPathAdded(index, path) },
-                    onErase = { offsets -> onErase(index, offsets) },
-                    onEraseStart = { onEraseStart(index) },
-                    onEraseEnd = { onEraseEnd(index) },
-                    darkMode = darkMode,
-                    onStylusDetected = onStylusDetected,
-                    onStylusButtonPressed = onStylusButtonPressed,
-                    enableStylusPressure = enableStylusPressure,
-                    onPressureUpdate = onPressureUpdate
-                )
-                Spacer(Modifier.height(12.dp))
+        val listModifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offsetX,
+                translationY = offsetY
+            )
+        
+        if (isVerticalScroll) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        isVertical = true
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+        } else {
+             androidx.compose.foundation.lazy.LazyRow(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(end = 16.dp), // Padding at end for horizontal
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillParentMaxHeight(),
+                        isVertical = false
+                    )
+                }
             }
         }
 
@@ -1340,7 +1450,8 @@ private fun PdfEditModeTablet(
                 onEraserRadiusChange = onEraserRadiusChange,
                 // Parámetros de presión capacitiva del stylus
                 enableStylusPressure = enableStylusPressure,
-                onEnableStylusPressureChange = { onEnableStylusPressureChange(it) }
+                onEnableStylusPressureChange = { onEnableStylusPressureChange(it) },
+                onShowSettings = { showEditorSettings = true }
             )
         }
 
@@ -1360,6 +1471,18 @@ private fun PdfEditModeTablet(
                 extendedMode = tunerExtendedMode,
                 onToggleExtendedMode = onToggleExtendedMode,
                 onDismiss = onDismissTunerSettings
+            )
+        }
+
+        if (showEditorSettings) {
+            EditorSettingsDialog(
+                isDaltonic = isDaltonic,
+                onToggleDaltonic = onToggleDaltonic,
+                isVerticalScroll = isVerticalScroll,
+                onVerticalScrollChange = onVerticalScrollChange,
+                enableStylusPressure = enableStylusPressure,
+                onEnableStylusPressureChange = onEnableStylusPressureChange,
+                onDismiss = { showEditorSettings = false }
             )
         }
     }
@@ -1417,8 +1540,16 @@ private fun PdfEditModePhone(
     onStylusDetected: () -> Unit = {},
     onStylusButtonPressed: () -> Unit = {},
     enableStylusPressure: Boolean = true,
-    onPressureUpdate: (Float) -> Unit = {}
+    onPressureUpdate: (Float) -> Unit = {},
+    metronomeOn: Boolean,
+    onMetronomeClick: () -> Unit,
+    onMetronomeLongClick: () -> Unit,
+    isVerticalScroll: Boolean,
+    onVerticalScrollChange: (Boolean) -> Unit,
+    onEnableStylusPressureChange: (Boolean) -> Unit
 ) {
+    var showEditorSettings by remember { mutableStateOf(false) }
+    
     Scaffold(
         topBar = {
             if (!concertModeOn) {
@@ -1433,23 +1564,28 @@ private fun PdfEditModePhone(
                     onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
                     onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
                     onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
+                    metronomeOn = metronomeOn,
+                    onMetronomeClick = onMetronomeClick,
+                    onMetronomeLongClick = onMetronomeLongClick,
                     centerContent = {
-                        if (tunerOn) {
-                            TunnerSmall(
-                                tunner = tunner,
-                                isDaltonic = isDaltonic,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .onGloballyPositioned { coords ->
-                                        onUpdateTutorialTarget {
-                                            it.copy(
-                                                tunerDisplay = coords.boundsInRoot()
-                                            )
-                                        }
-                                    },
-                                onClick = onShowTunerSettings
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                           // Manual button removed
+                           if (tunerOn) {
+                                TunnerSmall(
+                                    tunner = tunner,
+                                    isDaltonic = isDaltonic,
+                                    modifier = Modifier
+                                        .height(44.dp) // Removed illWidth to share space
+                                        .onGloballyPositioned { coords ->
+                                            onUpdateTutorialTarget {
+                                                it.copy(
+                                                    tunerDisplay = coords.boundsInRoot()
+                                                )
+                                            }
+                                        },
+                                    onClick = onShowTunerSettings
+                                )
+                            }
                         }
                     }
                 )
@@ -1499,6 +1635,13 @@ private fun PdfEditModePhone(
                             .clickable { onPaletteSlotClicked(index) }
                     )
                 }
+                
+                Spacer(Modifier.width(8.dp))
+                
+                // Settings Button
+                IconButton(onClick = { showEditorSettings = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
     ) { padding ->
@@ -1520,49 +1663,106 @@ private fun PdfEditModePhone(
                         } else Modifier
                     )
             ) {
-                LazyColumn(
-                    state = listState,
-                    userScrollEnabled = !isPinching && selectedTool == "none",
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = offsetX,
-                            translationY = offsetY
-                        ),
-                    contentPadding = PaddingValues(bottom = 16.dp)
-                ) {
-                    items(count = pageCount) { index ->
-                        val bmp = pageBitmaps.getOrNull(index)
-                        PdfPageItem(
-                            index = index,
-                            bitmap = bmp,
-                            showLoadingLabel = bmp == null,
-                            editMode = true,
-                            annotations = annotations[index] ?: PageAnnotations(index),
-                            selectedTool = selectedTool,
-                            currentColor = currentColor,
-                            currentStrokeWidth = when (selectedTool) {
-                                "marker" -> markerStrokeWidth
-                                "highlighter" -> highlighterStrokeWidth
-                                else -> markerStrokeWidth
-                            },
-                            eraserRadiusNorm = eraserRadiusNorm,
-                            smoothingEnabled = smoothingEnabled,
-                            onPathAdded = { path -> onPathAdded(index, path) },
-                            onErase = { offsets -> onErase(index, offsets) },
-                            onEraseStart = { onEraseStart(index) },
-                            onEraseEnd = { onEraseEnd(index) },
-                            darkMode = darkMode,
-                            onStylusDetected = onStylusDetected,
-                            onStylusButtonPressed = onStylusButtonPressed,
-                            enableStylusPressure = enableStylusPressure,
-                            onPressureUpdate = onPressureUpdate
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    }
+        val listModifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offsetX,
+                translationY = offsetY
+            )
+
+        if (isVerticalScroll) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(bottom = 80.dp) // Bottom padding for toolbar
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        isVertical = true
+                    )
+                    Spacer(Modifier.height(12.dp))
                 }
+            }
+        } else {
+            androidx.compose.foundation.lazy.LazyRow(
+                state = listState,
+                userScrollEnabled = !isPinching && selectedTool == "none",
+                modifier = listModifier,
+                contentPadding = PaddingValues(end = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(count = pageCount) { index ->
+                    val bmp = pageBitmaps.getOrNull(index)
+                    PdfPageItem(
+                        index = index,
+                        bitmap = bmp,
+                        showLoadingLabel = bmp == null,
+                        editMode = true,
+                        annotations = annotations[index] ?: PageAnnotations(index),
+                        selectedTool = selectedTool,
+                        currentColor = currentColor,
+                        currentStrokeWidth = when (selectedTool) {
+                            "marker" -> markerStrokeWidth
+                            "highlighter" -> highlighterStrokeWidth
+                            else -> markerStrokeWidth
+                        },
+                        eraserRadiusNorm = eraserRadiusNorm,
+                        smoothingEnabled = smoothingEnabled,
+                        onPathAdded = { path -> onPathAdded(index, path) },
+                        onErase = { offsets -> onErase(index, offsets) },
+                        onEraseStart = { onEraseStart(index) },
+                        onEraseEnd = { onEraseEnd(index) },
+                        darkMode = darkMode,
+                        onStylusDetected = onStylusDetected,
+                        onStylusButtonPressed = onStylusButtonPressed,
+                        enableStylusPressure = enableStylusPressure,
+                        onPressureUpdate = onPressureUpdate,
+                        modifier = Modifier.fillParentMaxHeight().padding(bottom = 56.dp),
+                        isVertical = false
+                    )
+                }
+            }
+        }
+        
+        if (showEditorSettings) {
+             EditorSettingsDialog(
+                isDaltonic = isDaltonic,
+                onToggleDaltonic = onToggleDaltonic,
+                isVerticalScroll = isVerticalScroll,
+                onVerticalScrollChange = onVerticalScrollChange,
+                enableStylusPressure = enableStylusPressure,
+                onEnableStylusPressureChange = onEnableStylusPressureChange,
+                onDismiss = { showEditorSettings = false }
+            )
+        }
 
                 if (showColorPicker) {
                     ColorPickerDialog(
@@ -1764,197 +1964,7 @@ private fun PdfEditModeTablet(
     )
 }
 
-@Composable
-private fun PdfEditModePhone(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    isPinching: Boolean,
-    scale: Float,
-    offsetX: Float,
-    offsetY: Float,
-    pageCount: Int,
-    pageBitmaps: List<Bitmap?>,
-    annotations: Map<Int, PageAnnotations>,
-    selectedTool: String,
-    currentColor: Color,
-    markerStrokeWidth: Float,
-    eraserRadiusNorm: Float,
-    smoothingEnabled: Boolean,
-    onPathAdded: (Int, DrawingPath) -> Unit,
-    onErase: (Int, List<androidx.compose.ui.geometry.Offset>) -> Unit,
-    darkMode: Boolean,
-    paletteColors: List<Color>,
-    selectedPaletteIndex: Int,
-    highlighterStrokeWidth: Float,
-    showColorPicker: Boolean,
-    language: Language,
-    onBack: () -> Unit,
-    tunerOn: Boolean,
-    concertModeOn: Boolean,
-    onTunerClick: () -> Unit,
-    onConcertClick: () -> Unit,
-    tunner: AudioTuner,
-    isDaltonic: Boolean,
-    tunerExtendedMode: Boolean,
-    showTunerSettings: Boolean,
-    onToggleDaltonic: () -> Unit,
-    onToggleExtendedMode: () -> Unit,
-    onUpdateTutorialTarget: ((ViewerTutorialTargets) -> ViewerTutorialTargets) -> Unit,
-    onSelectTool: (String) -> Unit,
-    onPaletteSlotClicked: (Int) -> Unit,
-    onStrokeChange: (Float) -> Unit,
-    onToggleSmoothing: () -> Unit,
-    onColorSelected: (Color) -> Unit,
-    onDismissColorPicker: () -> Unit,
-    onDismissTunerSettings: () -> Unit,
-    onTransform: (Float, androidx.compose.ui.geometry.Offset, Float, Float) -> Unit,
-    onShowTunerSettings: () -> Unit
-) {
-    val topBarHeight = 64.dp
-    Scaffold(
-        topBar = {
-            StyledTopBar(
-                onBack = onBack,
-                tunerOn = tunerOn,
-                concertModeOn = concertModeOn,
-                highlightBack = false,
-                onTunerClick = onTunerClick,
-                onConcertClick = onConcertClick,
-                darkMode = darkMode,
-                onTunerPositioned = { rect -> onUpdateTutorialTarget { it.copy(tunerButton = rect) } },
-                onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
-                onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
-                centerContent = {
-                    if (tunerOn) {
-                        TunnerSmall(
-                            tunner = tunner,
-                            isDaltonic = isDaltonic,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
-                            onClick = onShowTunerSettings
-                        )
-                    }
-                }
-            )
-        },
-        bottomBar = {
-            // Bottom Toolbar for Phone
-            BottomAppBar(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) {
-                // Tools: Marker, Highlighter, Eraser
-                IconButton(onClick = { onSelectTool("marker") }) {
-                    Icon(
-                        androidx.compose.material.icons.Icons.Default.Edit,
-                        contentDescription = "Marker",
-                        tint = if (selectedTool == "marker") currentColor else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                IconButton(onClick = { onSelectTool("highlighter") }) {
-                    Icon(
-                        androidx.compose.material.icons.Icons.Default.Brush,
-                        contentDescription = "Highlighter",
-                        tint = if (selectedTool == "highlighter") currentColor else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                IconButton(onClick = { onSelectTool("eraser") }) {
-                    Icon(
-                        androidx.compose.material.icons.Icons.Default.Delete, // Or eraser icon
-                        contentDescription = "Eraser",
-                        tint = if (selectedTool == "eraser") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                
-                Spacer(Modifier.weight(1f))
-                
-                // Palette
-                paletteColors.forEachIndexed { index, color ->
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .padding(4.dp)
-                            .background(color = color, shape = androidx.compose.foundation.shape.CircleShape)
-                            .clickable { onPaletteSlotClicked(index) }
-                    )
-                }
-            }
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .then(
-                    if (selectedTool == "none") {
-                        Modifier.pointerInput(selectedTool) {
-                            detectTransformGestures { centroid, pan, zoom, _ ->
-                                onTransform(zoom, centroid, pan.x, pan.y)
-                            }
-                        }
-                    } else Modifier
-                )
-        ) {
-            LazyColumn(
-                state = listState,
-                userScrollEnabled = !isPinching,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY
-                    ),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(count = pageCount) { index ->
-                    val bmp = pageBitmaps.getOrNull(index)
-                    PdfPageItem(
-                        index = index,
-                        bitmap = bmp,
-                        showLoadingLabel = bmp == null,
-                        editMode = true,
-                        annotations = annotations[index] ?: PageAnnotations(index),
-                        selectedTool = selectedTool,
-                        currentColor = currentColor,
-                        currentStrokeWidth = when (selectedTool) {
-                            "marker" -> markerStrokeWidth
-                            "highlighter" -> highlighterStrokeWidth
-                            else -> markerStrokeWidth
-                        },
-                        eraserRadiusNorm = eraserRadiusNorm,
-                        smoothingEnabled = smoothingEnabled,
-                        onPathAdded = { path -> onPathAdded(index, path) },
-                        onErase = { offsets -> onErase(index, offsets) },
-                        darkMode = darkMode
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-            }
-            
-            if (showColorPicker) {
-                ColorPickerDialog(
-                    currentColor = currentColor,
-                    onColorSelected = onColorSelected,
-                    onDismiss = onDismissColorPicker
-                )
-            }
-            
-            if (showTunerSettings) {
-                TunerSettingsDialog(
-                    tuner = tunner,
-                    isDaltonic = isDaltonic,
-                    onToggleDaltonic = onToggleDaltonic,
-                    extendedMode = tunerExtendedMode,
-                    onToggleExtendedMode = onToggleExtendedMode,
-                    onDismiss = onDismissTunerSettings
-                )
-            }
-        }
-    }
-}
+
 
 private fun distancePointToSegment(
     p: androidx.compose.ui.geometry.Offset,

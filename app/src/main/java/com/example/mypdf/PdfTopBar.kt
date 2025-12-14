@@ -7,8 +7,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,7 +27,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.AvTimer
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
@@ -107,7 +111,7 @@ fun StyledTopBar(
                     }
             ) {
                 Icon(
-                    Icons.Default.Home,
+                    Icons.Outlined.Home,
                     contentDescription = s.backDescription,
                     tint = backColor,
                     modifier = Modifier.size(24.dp * (if (isTablet) 1.5f else 1f))
@@ -134,7 +138,7 @@ fun StyledTopBar(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        Icons.Default.MusicNote,
+                        Icons.Outlined.MusicNote,
                         contentDescription = s.tunerDescription,
                         tint = if (tunerOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(32.dp * (if (isTablet) 1.5f else 1f))
@@ -167,7 +171,7 @@ fun StyledTopBar(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        androidx.compose.material.icons.Icons.Filled.AvTimer,
+                        Icons.Outlined.AccessTime,
                         contentDescription = s.metronomeDescription,
                         tint = if (metronomeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(28.dp * (if (isTablet) 1.5f else 1f))
@@ -196,7 +200,7 @@ fun StyledTopBar(
                     }
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
+                    Icons.Outlined.PlayArrow,
                     contentDescription = s.concertDescription,
                     tint = if (concertModeOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(32.dp * (if (isTablet) 1.5f else 1f))
