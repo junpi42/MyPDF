@@ -37,8 +37,14 @@ import java.io.File
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.layout.WindowInsets
 import com.example.mypdf.ui.theme.MyPDFTheme
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.tasks.Task
 
 // PERF helper está definido al final del archivo (no necesitamos imports extra aquí)
 // <<< PERF IMPORTS <<<
@@ -84,7 +90,77 @@ class MainActivity : ComponentActivity() {
             var language by remember { mutableStateOf(if (initialSettings?.language == "ES") Language.ES else Language.EN) }
             var gridScale by remember { mutableFloatStateOf(initialSettings?.gridScale ?: 1.0f) }
             var isDaltonic by remember { mutableStateOf(initialSettings?.isDaltonic ?: false) }
+
             var tutorialCompleted by remember { mutableStateOf(initialSettings?.tutorialCompleted ?: false) }
+
+            // --- Google Sign In State ---
+            var googleAccount by remember { mutableStateOf<GoogleSignInAccount?>(null) }
+            
+            // Check for existing sign-in on launch
+            LaunchedEffect(Unit) {
+                googleAccount = GoogleSignIn.getLastSignedInAccount(context)
+            }
+
+            val gso = remember {
+                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                    .requestEmail()
+                    .requestProfile()
+                    .requestScopes(com.google.android.gms.common.api.Scope(com.google.api.services.drive.DriveScopes.DRIVE_FILE))
+                    .build()
+            }
+            val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+            val googleSignInLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == android.app.Activity.RESULT_OK) {
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    try {
+                        googleAccount = task.getResult(ApiException::class.java)
+                        Toast.makeText(context, "Signed in as ${googleAccount?.displayName}", Toast.LENGTH_SHORT).show()
+                    } catch (e: ApiException) {
+                        Toast.makeText(context, "Sign in failed: ${e.statusCode}", Toast.LENGTH_SHORT).show()
+                        googleAccount = null
+                    }
+                }
+            }
+
+            fun doSignIn() {
+                googleSignInLauncher.launch(googleSignInClient.signInIntent)
+            }
+
+            fun doSignOut() {
+                googleSignInClient.signOut().addOnCompleteListener {
+                    googleAccount = null
+                    Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            // --- SYNC LOGIC ---
+            var syncTrigger by remember { mutableIntStateOf(0) }
+            val triggerSync: () -> Unit = { syncTrigger++ }
+            var refreshTrigger by remember { mutableIntStateOf(0) }
+
+            LaunchedEffect(googleAccount, syncTrigger) {
+                googleAccount?.let { account ->
+                    val driveService = GoogleDriveService(context, account)
+                    val syncManager = CloudSyncManager(context, driveService)
+                    Toast.makeText(context, "Cloud Syncing...", Toast.LENGTH_SHORT).show()
+                    try {
+                        syncManager.sync()
+                        Toast.makeText(context, "Sync Complete!", Toast.LENGTH_SHORT).show()
+                        // Ensure UI reflects changes (downloads/deletes)
+                        refreshTrigger++ // Signal UI to refresh
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Job cancelled (user rotated or signed out or navigated), ignore.
+                        throw e 
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Sync Failed: ${e.message}", Toast.LENGTH_LONG).show()
+                        e.printStackTrace()
+                    }
+                }
+            }
+            // ------------------
 
             // Helper to save settings
             fun save() {
@@ -134,9 +210,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 gridScale = gridScale,
                                 onGridScaleChange = { gridScale = it; save() },
+
                                 tutorialCompleted = tutorialCompleted,
                                 onTutorialComplete = { tutorialCompleted = true; save() },
-                                onResetTutorial = { tutorialCompleted = false; save() }
+                                onResetTutorial = { tutorialCompleted = false; save() },
+                                googleAccount = googleAccount,
+                                onSignIn = { doSignIn() },
+                                onSignOut = { doSignOut() },
+                                onSyncNow = triggerSync,
+                                refreshTrigger = refreshTrigger
                             )
                         }
                     }
@@ -159,7 +241,12 @@ private fun AppRootAdaptive(
     onGridScaleChange: (Float) -> Unit,
     tutorialCompleted: Boolean,
     onTutorialComplete: () -> Unit,
-    onResetTutorial: () -> Unit
+    onResetTutorial: () -> Unit,
+    googleAccount: GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    refreshTrigger: Int
 ) {
     var selectedPath by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedFile = selectedPath?.let(::File)
@@ -200,11 +287,15 @@ private fun AppRootAdaptive(
                     onTutorialComplete = {
                         onTutorialComplete()
                         tutorialStep = TutorialStep.NONE
-                        tutorialTargetRect = null
                     },
                     onResetTutorial = onResetTutorial,
                     tutorialState = tutorialState,
-                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect }
+                    onTutorialStateChange = { tutorialStep = it.step; tutorialTargetRect = it.targetRect },
+                    googleAccount = googleAccount,
+                    onSignIn = onSignIn,
+                    onSignOut = onSignOut,
+                    onSyncNow = onSyncNow,
+                    refreshTrigger = refreshTrigger
                 )
             } else {
                 PdfEditScreen(
@@ -251,7 +342,12 @@ fun LibraryScreen(
     onTutorialComplete: () -> Unit,
     onResetTutorial: () -> Unit,
     tutorialState: TutorialState,
-    onTutorialStateChange: (TutorialState) -> Unit
+    onTutorialStateChange: (TutorialState) -> Unit,
+    googleAccount: GoogleSignInAccount?,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    refreshTrigger: Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -442,6 +538,7 @@ fun LibraryScreen(
     LaunchedEffect(Unit) { refreshCategories() }
     LaunchedEffect(selectedCategory) { loadCategory(selectedCategory) }
     LaunchedEffect(query) { searchEverywhere(query) }
+    LaunchedEffect(refreshTrigger) { refreshCategories(); loadCategory(selectedCategory) }
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -466,6 +563,8 @@ fun LibraryScreen(
                 loadCategory(selectedCategory)
                 Toast.makeText(context, "PDF importado ✓", Toast.LENGTH_SHORT).show()
                 loading = false
+                // TRIGGER SYNC ON IMPORT
+                onSyncNow() 
             }
         }
     )
@@ -737,6 +836,12 @@ fun LibraryScreen(
                                 Toast.makeText(context, s.deleteError, Toast.LENGTH_SHORT).show()
                             }
                             showDeleteDialog = false
+                            
+                            // SYNC: Delete from Drive if logged in
+                            if (success && googleAccount != null) {
+                                // Trigger a sync to propagate deletion cleanly (Recursive Logic)
+                                onSyncNow()
+                            }
                         }
                     }
                 ) { Text(s.delete, color = MaterialTheme.colorScheme.error) }
@@ -775,6 +880,10 @@ fun LibraryScreen(
                 onTutorialStateChange(TutorialState(step = TutorialStep.INTRO_DIALOG))
                 showSettingsDialog = false
             },
+            googleAccount = googleAccount,
+            onSignIn = onSignIn,
+            onSignOut = onSignOut,
+            onSyncNow = onSyncNow,
             onDismiss = { showSettingsDialog = false }
         )
     }
