@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -1434,22 +1435,27 @@ private fun PdfEditModePhone(
                     onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
                     onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
                     centerContent = {
-                        if (tunerOn) {
-                            TunnerSmall(
-                                tunner = tunner,
-                                isDaltonic = isDaltonic,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .onGloballyPositioned { coords ->
-                                        onUpdateTutorialTarget {
-                                            it.copy(
-                                                tunerDisplay = coords.boundsInRoot()
-                                            )
-                                        }
-                                    },
-                                onClick = onShowTunerSettings
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                           // Metronome Button
+                           IconButton(onClick = onShowTunerSettings) {
+                               Icon(Icons.Default.AccessTime, contentDescription = "Metronome", tint = MaterialTheme.colorScheme.onSurface) 
+                           }
+                           if (tunerOn) {
+                                TunnerSmall(
+                                    tunner = tunner,
+                                    isDaltonic = isDaltonic,
+                                    modifier = Modifier
+                                        .height(44.dp) // Removed illWidth to share space
+                                        .onGloballyPositioned { coords ->
+                                            onUpdateTutorialTarget {
+                                                it.copy(
+                                                    tunerDisplay = coords.boundsInRoot()
+                                                )
+                                            }
+                                        },
+                                    onClick = onShowTunerSettings
+                                )
+                            }
                         }
                     }
                 )
@@ -1824,16 +1830,27 @@ private fun PdfEditModePhone(
                 onConcertPositioned = { rect -> onUpdateTutorialTarget { it.copy(concertButton = rect) } },
                 onBackPositioned = { rect -> onUpdateTutorialTarget { it.copy(backButton = rect) } },
                 centerContent = {
-                    if (tunerOn) {
-                        TunnerSmall(
-                            tunner = tunner,
-                            isDaltonic = isDaltonic,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .onGloballyPositioned { coords -> onUpdateTutorialTarget { it.copy(tunerDisplay = coords.boundsInRoot()) } },
-                            onClick = onShowTunerSettings
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                       // Metronome Button
+                       IconButton(onClick = onShowTunerSettings) {
+                           Icon(Icons.Default.AccessTime, contentDescription = "Metronome", tint = MaterialTheme.colorScheme.onSurface) 
+                       }
+                       if (tunerOn) {
+                            TunnerSmall(
+                                tunner = tunner,
+                                isDaltonic = isDaltonic,
+                                modifier = Modifier
+                                    .height(44.dp)
+                                    .onGloballyPositioned { coords ->
+                                        onUpdateTutorialTarget {
+                                            it.copy(
+                                                tunerDisplay = coords.boundsInRoot()
+                                            )
+                                        }
+                                    },
+                                onClick = onShowTunerSettings
+                            )
+                        }
                     }
                 }
             )

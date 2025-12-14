@@ -131,18 +131,48 @@ class CloudSyncManager(private val context: Context, private val driveService: G
                         }
                     }
                 }
-            } else {
-                // Remote exists, Local exists -> SYNCED
-                addToKnown(itemRelativePath)
+                // Both exist -> SYNCED or UPDATE
                 val localItem = localMap[rName]!!
                 
                 if (isFolder && localItem.isDirectory) {
-                    // Recurse
+                    // Recurse (already adds to known)
+                    addToKnown(itemRelativePath)
                     syncFolder(localItem, rItem.id, itemRelativePath, allCurrentPaths)
-                } 
-                // If file, we assume they are same for now (simple sync). 
-                // Later could check mod time/hash.
-            }
+                } else if (!isFolder && localItem.isFile) {
+                    // FILE: Check timestamps for updates
+                    // Drive time is rItem.modifiedTime (DateTime from API)
+                    // Local time is localItem.lastModified() (Long millis)
+                    
+                    val remoteTime = rItem.modifiedTime?.value ?: 0L
+                    val localTime = localItem.lastModified()
+                    
+                    // Simple logic: If difference > 2 seconds (buffer), sync newest
+                    if (remoteTime > localTime + 2000) {
+                        // Remote is newer -> Download
+                        try {
+                           driveService.downloadFile(rItem.id, localItem)
+                           localItem.setLastModified(remoteTime) // Try to sync timestamps
+                           addToKnown(itemRelativePath)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else if (localTime > remoteTime + 2000) {
+                        // Local is newer -> Upload
+                        try {
+                            driveService.updateFile(localItem, rItem.id) // Need updateFile in Service
+                            addToKnown(itemRelativePath)
+                        } catch (e: Exception) {
+                            // If update fails, maybe re-upload? simpler to catch
+                            e.printStackTrace()
+                        }
+                    } else {
+                        // In sync
+                        addToKnown(itemRelativePath)
+                    }
+                } else {
+                    // Type mismatch (folder vs file)? For now ignore or overwrite.
+                    addToKnown(itemRelativePath)
+                }
         }
 
         // --- D. Process Local Items (Upwards) ---
@@ -236,5 +266,6 @@ class CloudSyncManager(private val context: Context, private val driveService: G
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
     }
 }

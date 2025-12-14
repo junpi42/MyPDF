@@ -134,4 +134,13 @@ class GoogleDriveService(context: Context, account: GoogleSignInAccount) {
     suspend fun deleteFile(fileId: String) = withContext(Dispatchers.IO) {
         driveService.files().delete(fileId).execute()
     }
+
+    suspend fun updateFile(localFile: java.io.File, fileId: String): String = withContext(Dispatchers.IO) {
+        val mediaContent = FileContent("application/pdf", localFile)
+        val fileMetadata = File()
+        val updatedFile = driveService.files().update(fileId, fileMetadata, mediaContent)
+            .setFields("id, modifiedTime")
+            .execute()
+        return@withContext updatedFile.id
+    }
 }
